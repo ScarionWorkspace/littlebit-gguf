@@ -4,7 +4,10 @@ Native inference for [LittleBit](https://github.com/SamsungLabs/LittleBit)-compr
 (< 1 bit per weight) in **llama.cpp** and **Ollama**: packed binary factors in GGUF and
 existing ggml kernels, without expanding them back to dense weights.
 
-> **License notice.** The code in this repository is MIT-licensed. LittleBit itself
+> **Status: experimental.** Work in progress, formats and interfaces may still change.
+> Nothing here runs in llama.cpp or Ollama yet. Not suitable for production use.
+
+> **License notice.** Our own code in this repository is MIT-licensed (see `LICENSE`). LittleBit itself
 > (paper, reference code, and all checkpoints trained with it) is licensed under
 > **CC BY-NC 4.0**, so **non-commercial use only**. This repository contains no LittleBit code.
 > Scripts that need it (`make_littlebit_init.py`, the comparison scripts) import it from a
@@ -68,7 +71,10 @@ cd .. && .venv/bin/hf download Qwen/Qwen3-0.6B --local-dir models/Qwen3-0.6B && 
 # golden files for llama.cpp
 ../.venv/bin/python scripts/make_golden.py --model ../models/qwen3-0.6b-lb-init-0.55 \
     --out ../golden/qwen3-0.6b-lb-init-0.55
-# tests (the last three groups only run when the env vars are set)
+# golden files are 45-85 MB per model and are never committed: regenerate them with
+# make_golden.py. The init is deterministic (byte-identical on re-run);
+# meta.json records the SHA256 of the model it was made from.
+# tests (the LittleBit/golden groups only run when the env vars are set)
 LITTLEBIT_DIR=../LittleBit LB_MODEL=../models/qwen3-0.6b-lb-init-0.55 \
 LB_GOLDEN=../golden/qwen3-0.6b-lb-init-0.55 ../.venv/bin/python -m pytest -q tests
 ```
