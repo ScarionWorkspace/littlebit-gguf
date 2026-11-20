@@ -15,5 +15,13 @@ jobs:
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
+      - name: gguf-py from llama.cpp (pinned to Ollama's LLAMA_CPP_VERSION)
+        run: |
+          git clone --depth 1 --branch b12257 --filter=blob:none --sparse \
+            https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
+          git -C "$RUNNER_TEMP/llama.cpp" sparse-checkout set gguf-py
+          pip install pyyaml tqdm
       - name: Unit tests (no model downloads)
-        run: pytest -q tests
+        env:
+          LLAMA_CPP_DIR: ${{ runner.temp }}/llama.cpp
+        run: pytest -q -rs tests

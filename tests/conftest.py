@@ -19,3 +19,14 @@ def littlebit_dir():
     if not p or not (p / "quantization").exists():
         pytest.skip("LITTLEBIT_DIR not set (checkout of SamsungLabs/LittleBit)")
     return p
+
+
+@pytest.fixture(scope="session")
+def gguf_py():
+    """gguf-py from the llama.cpp checkout (LLAMA_CPP_DIR, default ../llama.cpp)."""
+    p = env_path("LLAMA_CPP_DIR") or ROOT.parent / "llama.cpp"
+    if not (p / "gguf-py" / "gguf").exists():
+        pytest.skip("llama.cpp checkout with gguf-py not found (set LLAMA_CPP_DIR)")
+    sys.path.insert(0, str(p / "gguf-py"))
+    import gguf
+    return gguf
