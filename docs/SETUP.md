@@ -48,6 +48,15 @@ Ergebnis: `scripts/setup/install_rocm_wsl.sh` in einem separaten WSL-Fenster aus
 - HIP-Test (Vektoraddition, `--offload-arch=gfx1201`): Kernel läuft, Ergebnis korrekt. 16191 MiB VRAM, warpSize 32.
 - Hinweis: apt hat als Abhängigkeit zusätzlich Ubuntus eigene alte HIP/HSA-Bibliotheken installiert (`libamdhip64-5` 5.7.1, `libhsa-runtime64-1` 5.7.1 in `/usr/lib`). Beim llama.cpp-Build darauf achten, dass `/opt/rocm` verwendet wird (`-DCMAKE_PREFIX_PATH=/opt/rocm`, `HIPCXX=/opt/rocm/lib/llvm/bin/clang`), und mit `ldd` prüfen.
 - Die Windows-Adrenalin-Version ist nicht erfasst. Sie funktioniert offensichtlich.
+- **llama.cpp-HIP-Build** (3,5 min mit 16 Threads):
+  ```bash
+  export PATH=$PATH:/opt/rocm/bin HSA_ENABLE_DXG_DETECTION=1
+  HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" HF_UI_VERSION=b12257 \
+    cmake -S . -B build-hip -G Ninja -DGGML_HIP=ON -DGPU_TARGETS=gfx1201 -DCMAKE_BUILD_TYPE=Release \
+    -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DCMAKE_PREFIX_PATH=/opt/rocm
+  HF_UI_VERSION=b12257 cmake --build build-hip -j16
+  ```
+  `HF_UI_VERSION=b12257` ist nötig: Durch unseren Commit wird die Build-Nummer `b12258`. Für die gibt es keine vorgefertigte Web-UI, und der Download der UI-Assets für `llama-server` schlägt fehl. An der UI ändern wir nichts, also passt das Paket des Basis-Tags.
 
 Recherche-Notizen (vor der Installation):
 

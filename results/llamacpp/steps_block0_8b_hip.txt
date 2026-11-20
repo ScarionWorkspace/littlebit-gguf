@@ -1,0 +1,28 @@
+Block 0, Qwen3-8B LittleBit 0.55 bpw, prompt "The capital of France is" (5 tokens)
+scripts/check_llamacpp_steps.py, llama.cpp branch littlebit (3735b3a7f), ROCm 7.2.4, RX 9070 XT (gfx1201), 2026-11-20
+Relative L2 error. "sim" = Numerics.llamacpp_q1_0 (Q8 activations, FP16 scales, F16 KV), "exact" = FP64 reference.
+
+Vcur-0 = output of the factorized v_proj on an identical input (attn_norm-0): isolates the LittleBit path.
+== build-cpu ngl=0 flash_attn=off
+attn_norm-0  llama.cpp vs sim 4.58e-08   vs exact 4.68e-08   (sim vs exact 5.19e-08)
+Vcur-0       llama.cpp vs sim 6.40e-08   vs exact 6.41e-03   (sim vs exact 6.41e-03)
+== build-hip ngl=99 flash_attn=off
+attn_norm-0  llama.cpp vs sim 4.58e-08   vs exact 4.68e-08   (sim vs exact 5.19e-08)
+Vcur-0       llama.cpp vs sim 5.91e-08   vs exact 6.41e-03   (sim vs exact 6.41e-03)
+
+Whole block on the GPU (attention on the GPU runs K*Q in F16, so llama.cpp leaves the simulation at kqv_out;
+from there single Q8 roundings flip; errors vs exact stay at the size of sim vs exact):
+== build-hip ngl=99 flash_attn=off
+attn_norm-0  llama.cpp vs sim 4.58e-08   vs exact 4.68e-08   (sim vs exact 5.19e-08)
+kqv_out-0    llama.cpp vs sim 2.37e-04   vs exact 7.08e-03   (sim vs exact 7.08e-03)
+ffn_norm-0   llama.cpp vs sim 2.61e-03   vs exact 5.53e-03   (sim vs exact 5.59e-03)
+ffn_out-0    llama.cpp vs sim 8.23e-03   vs exact 9.21e-03   (sim vs exact 9.49e-03)
+l_out-0      llama.cpp vs sim 7.67e-03   vs exact 8.65e-03   (sim vs exact 8.91e-03)
+== build-hip ngl=99 flash_attn=on
+attn_norm-0  llama.cpp vs sim 4.58e-08   vs exact 4.68e-08   (sim vs exact 5.19e-08)
+kqv_out-0    llama.cpp vs sim 2.95e-04   vs exact 7.10e-03   (sim vs exact 7.08e-03)
+ffn_norm-0   llama.cpp vs sim 2.59e-03   vs exact 5.59e-03   (sim vs exact 5.59e-03)
+ffn_out-0    llama.cpp vs sim 9.05e-03   vs exact 9.65e-03   (sim vs exact 9.49e-03)
+l_out-0      llama.cpp vs sim 8.43e-03   vs exact 9.06e-03   (sim vs exact 8.91e-03)
+
+test-backend-ops test -o MUL_MAT -p type_a=q1_0 on ROCm0: 85/85 OK.
