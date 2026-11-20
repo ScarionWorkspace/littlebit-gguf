@@ -1,0 +1,24 @@
+== qwen3-0.6b-lb-init-0.55 flash_attn=off
+attn_norm-0  llama.cpp vs sim 6.53e-08   vs exact 6.20e-08   (sim vs exact 6.79e-08)
+kqv_out-0    llama.cpp vs sim 4.42e-07   vs exact 8.39e-03   (sim vs exact 8.39e-03)
+ffn_norm-0   llama.cpp vs sim 8.94e-08   vs exact 8.62e-03   (sim vs exact 8.62e-03)
+ffn_out-0    llama.cpp vs sim 6.92e-08   vs exact 1.95e-02   (sim vs exact 1.95e-02)
+l_out-0      llama.cpp vs sim 7.30e-08   vs exact 1.06e-02   (sim vs exact 1.06e-02)
+== qwen3-0.6b-lb-init-0.55 flash_attn=on
+attn_norm-0  llama.cpp vs sim 6.53e-08   vs exact 6.20e-08   (sim vs exact 6.79e-08)
+kqv_out-0    llama.cpp vs sim 2.18e-04   vs exact 8.40e-03   (sim vs exact 8.39e-03)
+ffn_norm-0   llama.cpp vs sim 3.68e-03   vs exact 8.58e-03   (sim vs exact 8.62e-03)
+ffn_out-0    llama.cpp vs sim 1.87e-02   vs exact 1.90e-02   (sim vs exact 1.95e-02)
+l_out-0      llama.cpp vs sim 7.67e-03   vs exact 1.04e-02   (sim vs exact 1.06e-02)
+== littlebit-qwen3-8b-0.55bpw flash_attn=off
+attn_norm-0  llama.cpp vs sim 4.58e-08   vs exact 4.68e-08   (sim vs exact 5.19e-08)
+kqv_out-0    llama.cpp vs sim 2.37e-07   vs exact 7.08e-03   (sim vs exact 7.08e-03)
+ffn_norm-0   llama.cpp vs sim 8.60e-08   vs exact 5.59e-03   (sim vs exact 5.59e-03)
+ffn_out-0    llama.cpp vs sim 1.09e-03   vs exact 9.50e-03   (sim vs exact 9.49e-03)
+l_out-0      llama.cpp vs sim 1.01e-03   vs exact 8.92e-03   (sim vs exact 8.91e-03)
+== littlebit-qwen3-8b-0.55bpw flash_attn=on
+attn_norm-0  llama.cpp vs sim 4.58e-08   vs exact 4.68e-08   (sim vs exact 5.19e-08)
+kqv_out-0    llama.cpp vs sim 2.30e-04   vs exact 7.08e-03   (sim vs exact 7.08e-03)
+ffn_norm-0   llama.cpp vs sim 2.62e-03   vs exact 5.53e-03   (sim vs exact 5.59e-03)
+ffn_out-0    llama.cpp vs sim 8.71e-03   vs exact 9.60e-03   (sim vs exact 9.49e-03)
+l_out-0      llama.cpp vs sim 8.11e-03   vs exact 9.01e-03   (sim vs exact 8.91e-03)

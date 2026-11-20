@@ -42,9 +42,13 @@ TOL_FP_REFERENCE = {"rel_max": 1e-4, "kl_max": 1e-6}
 # (trained 8B, 4 prompts + 4x512 WikiText-2 tokens). The simulation of llama.cpp's numerics
 # (Q8_0 activations, FP16 scales, F16 KV cache) vs. the exact FP64 reference measured:
 #   KL mean 8.9e-4, KL max 5.8e-2, PPL -0.10 %. Q8_0 activations are ~100 % of that.
-# Level 1: llama.cpp vs. the *simulation* (Numerics.llamacpp_q1_0). Same quantization, only
-#   summation order / implementation details differ; allow 10 % of the Q8 effect.
-TOL_LLAMACPP_VS_SIM = {"kl_mean": 1e-4, "kl_max": 1e-2, "ppl_delta_abs": 5e-4}
+# Level 1: llama.cpp vs. the *simulation* (Numerics.llamacpp_q1_0). First set to 10 % of the Q8
+#   effect on the assumption that only summation order differs; that was wrong: Q8 rounding is
+#   discontinuous, so any FP32 difference flips single quantization steps, which then propagate.
+#   Measured noise floor (same simulation in FP32 vs FP64, 8B, 2108 positions): KL mean 2.38e-4,
+#   KL max 5.6e-3. llama.cpp vs simulation sits exactly on it (2.38e-4). Limit = 2x floor.
+#   Bugs are caught more sharply by the block-wise check (llama.cpp == simulation to ~1e-7).
+TOL_LLAMACPP_VS_SIM = {"kl_mean": 5e-4, "kl_max": 2e-2, "ppl_delta_abs": 2.5e-3}
 # Level 2: llama.cpp vs. the *exact* reference: about 2x the measured Q8 effect.
 TOL_LLAMACPP_VS_EXACT = {"kl_mean": 2e-3, "kl_max": 1e-1, "ppl_delta_abs": 5e-3}
 # Per single layer (teacher forced, golden layers.npz inputs), relative L2 error vs. exact.

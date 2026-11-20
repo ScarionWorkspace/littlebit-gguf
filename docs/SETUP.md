@@ -40,10 +40,43 @@ memory=24GB
 swap=16GB
 ```
 
-### ROCm (vor Phase 3.3)
+### ROCm für die RX 9070 XT unter WSL2 – **installiert und geprüft (2026-11-20)**
 
-Noch offen. Wird vor dem GPU-Teil geprüft: passende ROCm-Version für gfx1201 unter WSL samt
-`librocdxg`. Fallback ist das Vulkan-Backend.
+Ergebnis: `scripts/setup/install_rocm_wsl.sh` in einem separaten WSL-Fenster ausgeführt. `sudo` braucht ein Terminal, mit `!` in Claude Code geht es nicht.
+- Installiert: `rocm` 7.2.4.70204, `rocdxg-roct` 1.2.0 (`/opt/rocm/lib/librocdxg.so.1.2.0`), `hipcc` 1.1.1 (HIP 7.2.53211, AMD clang 22). Kein `amdgpu-dkms`.
+- `rocminfo` (mit `HSA_ENABLE_DXG_DETECTION=1`): Agent 2 = `gfx1201`, „AMD Radeon RX 9070 XT“, 64 CUs. Die iGPU des 7800X3D erscheint **nicht** als Agent, der Workaround mit dem Geräte-Manager war also nicht nötig.
+- HIP-Test (Vektoraddition, `--offload-arch=gfx1201`): Kernel läuft, Ergebnis korrekt. 16191 MiB VRAM, warpSize 32.
+- Hinweis: apt hat als Abhängigkeit zusätzlich Ubuntus eigene alte HIP/HSA-Bibliotheken installiert (`libamdhip64-5` 5.7.1, `libhsa-runtime64-1` 5.7.1 in `/usr/lib`). Beim llama.cpp-Build darauf achten, dass `/opt/rocm` verwendet wird (`-DCMAKE_PREFIX_PATH=/opt/rocm`, `HIPCXX=/opt/rocm/lib/llvm/bin/clang`), und mit `ldd` prüfen.
+- Die Windows-Adrenalin-Version ist nicht erfasst. Sie funktioniert offensichtlich.
+- **llama.cpp-HIP-Build** (3,5 min mit 16 Threads):
+  ```bash
+  export PATH=$PATH:/opt/rocm/bin HSA_ENABLE_DXG_DETECTION=1
+  HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" HF_UI_VERSION=b12257 \
+    cmake -S . -B build-hip -G Ninja -DGGML_HIP=ON -DGPU_TARGETS=gfx1201 -DCMAKE_BUILD_TYPE=Release \
+    -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DCMAKE_PREFIX_PATH=/opt/rocm
+  HF_UI_VERSION=b12257 cmake --build build-hip -j16
+  ```
+  `HF_UI_VERSION=b12257` ist nötig: Durch unseren Commit wird die Build-Nummer `b12258`. Für die gibt es keine vorgefertigte Web-UI, und der Download der UI-Assets für `llama-server` schlägt fehl. An der UI ändern wir nichts, also passt das Paket des Basis-Tags.
+
+Recherche-Notizen (vor der Installation):
+
+Stand der Quellen:
+- **Offizieller Weg:** Adrenalin-Treiber für WSL2 (AMD nennt 26.2.2), dazu ROCm **7.2.x** und `librocdxg` 1.2.0. Die Kompatibilitätsmatrix von librocdxg führt RX 9070 / 9070 XT / 9070 GRE bei librocdxg 1.2.0 + ROCm 7.2.x. Ubuntu 24.04 wird unterstützt. Für ROCm vor 7.13 muss `HSA_ENABLE_DXG_DETECTION=1` gesetzt sein. Das Repo `ROCm/librocdxg` ist inzwischen veraltet, der Code liegt in `ROCm/rocm-systems`. Die Releases (`.deb`) gibt es aber weiter dort. librocdxg braucht nach eigener Aussage keine „Radeon Software for Linux“-Pakete.
+- **Bekannte Probleme:** Die ROCm-10.1-Wheels hängen auf gfx1201 unter WSL2 beim ersten Kernel (Windows-TDR). ROCm 7.2 läuft auf derselben Maschine (Adrenalin 26.8.1, ROCm 7.2.3, librocdxg 1.2.0). Der Fix ist in einem Nightly (10.3.0a20261105), ein stabiles Release ist nicht genannt.
+- **Wichtig für uns:** Der Hänger tritt auf, wenn die **iGPU des 7800X3D** („AMD Radeon Graphics“) neben der 9070 XT sichtbar ist. Workaround laut Issue: iGPU im Windows-Geräte-Manager deaktivieren, dann `wsl --shutdown`. Alternativ `ROCR_VISIBLE_DEVICES`.
+- **Konkreter Weg (2026-11-20 festgelegt):** ROCm **7.2.4** (aktuelle 7.2.x) und librocdxg **1.2.0** (die Matrixzeile mit RX 9070 XT). Aus der nativen Linux-Anleitung werden bewusst **nicht** übernommen: `amdgpu-dkms` und `linux-headers`. WSL läuft mit Microsofts eigenem Kernel (6.18-microsoft), die GPU bedient der Windows-Treiber über `/dev/dxg` (vorhanden, geprüft). Neuere librocdxg-Versionen (1.2.1/1.2.2) sind laut Matrix auf ROCm 7.13/7.14 ausgerichtet. Download-URLs geprüft (HTTP 200).
+- **Skript:** `scripts/setup/install_rocm_wsl.sh` (braucht `sudo`, vom Menschen auszuführen: `! bash scripts/setup/install_rocm_wsl.sh`). Danach neue Shell, dann `rocminfo | grep -E 'Marketing Name|gfx'` und `hipcc --version`.
+
+Danach:
+1. llama.cpp mit `-DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1201` in `build-hip` bauen, `test-backend-ops` für `Q1_0`.
+2. Fallback, wenn ROCm unter WSL nicht läuft: Vulkan-Backend (Mesa `dzn`/D3D12 unter WSL prüfen) oder natives Ubuntu.
+
+Quellen:
+[AMD: ROCm on Radeon, WSL How-to](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/wsl/howto_wsl.html) ·
+[ROCm/librocdxg (README, Kompatibilitätsmatrix)](https://github.com/ROCm/librocdxg) ·
+[librocdxg #74: RX 9070 XT läuft unter WSL2](https://github.com/ROCm/librocdxg/issues/74) ·
+[rocm-systems #13291: Hänger auf gfx1201 mit ROCm 10.1, iGPU-Workaround](https://github.com/ROCm/rocm-systems/issues/13291) ·
+[ROCm CLI unter WSL2](https://rocm.docs.amd.com/projects/rocm-cli/en/latest/install/wsl.html)
 
 ---
 

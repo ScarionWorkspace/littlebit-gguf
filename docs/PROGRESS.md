@@ -1,5 +1,86 @@
 # Fortschritt
 
+## Stand 2026-11-20 – Phase 3 (llama.cpp): CPU und GPU (HIP) korrekt, PPL bestätigt
+
+### GPU (RX 9070 XT, ROCm 7.2.4 unter WSL2)
+- ROCm installiert und geprüft (`SETUP.md`). llama.cpp-Build `build-hip` (`-DGGML_HIP=ON -DGPU_TARGETS=gfx1201`).
+- `test-backend-ops -o MUL_MAT -p type_a=q1_0`: **85/85 OK** auf ROCm0.
+- Block 0 schrittweise (`results/llamacpp/steps_block0_8b_hip.txt`): Der faktorisierte `v_proj` (gleicher Eingang) stimmt auf der GPU bis auf **5,9e-8** mit der Simulation überein, auf der CPU bis auf 6,4e-8. Der LittleBit-Pfad im HIP-Backend ist damit korrekt. Ab der Attention weicht die GPU ab, weil K·Q dort in F16 läuft. Das ist kein LittleBit-Thema.
+- Ganzes Modell, 2108 Positionen (`results/llamacpp/qwen3-8b-lnone-f16_hip.json`): **Stufe 1 und 2 bestanden.** vs. Simulation KL mittel 2,40e-4 (Rauschboden 2,38e-4), vs. exakt KL mittel 8,81e-4, ΔPPL −0,14 %.
+
+### Perplexity WikiText-2 (LittleBit-Methode: seqlen 2048, alle Positionen, 146 Fenster, 299 078 Tokens, GPU)
+
+| Variante | PPL |
+|---|---|
+| exaktes `l` (`--l-round none`) | **24,4932** |
+| BF16-gerundetes `l` (`--l-round bf16`, wie LittleBits Loader) | **24,4896** |
+| Modellkarte (LittleBit `eval.py`, BF16 auf A40) | 24,4754 |
+
+- Die BF16-Variante ist der vergleichbare Wert. Sie liegt **0,06 %** über dem veröffentlichten Wert, das passt zu den Q8-Aktivierungen (simuliert −0,1 % bis +0,1 %) und liegt deutlich innerhalb von Stufe 2 (0,5 %).
+- Die BF16-Rundung von `l` kostet praktisch nichts (0,015 %).
+- Gegencheck CPU vs. GPU auf den ersten 26 Fenstern: 23,8961 vs. 23,8953 (0,003 %). Der CPU-Teillauf ist in `results/llamacpp/ppl_wikitext2_s2048_qwen3-8b-lnone-f16_cpu.json` gesichert.
+- Ergebnisse: `results/llamacpp/ppl_wikitext2_s2048_qwen3-8b-l{none,bf16}-f16_hip.json`.
+
+### Geschwindigkeit RX 9070 XT (llama-bench, ngl 99)
+
+| Datei | Größe | pp512 | tg128 |
+|---|---|---|---|
+| 8B LittleBit, Embeddings Q4_K, lm_head Q6_K | 1,33 GiB | 3093 ± 170 t/s | 70,95 t/s |
+| 8B LittleBit, Embeddings/lm_head F16 | 2,84 GiB | 1281 ± 38 t/s | 61,75 t/s |
+
+Vermutung, noch ungeprüft: Bei 1,33 GiB sollte die Generierung deutlich schneller sein können. Die vielen kleinen Kernels pro Schicht (7 Ops × 7 Projektionen × 36 Blöcke) dürften die Grenze sein. Vor jeder Optimierung profilieren und gegen dichtes Qwen3-8B auf derselben Karte messen.
+
+### Nächste Schritte
+1. PR `phase3-llamacpp` → `main`.
+2. Vergleichsquants aus Qwen3-8B (Download lief bei Stand noch: `../models/Qwen3-8B`, bei Abbruch `hf download Qwen/Qwen3-8B --local-dir ../models/Qwen3-8B` erneut): Q4_K_M, Q2_K, IQ2_XXS, IQ1_S, TQ1_0. Größe, PPL (dieselbe Methode) und Geschwindigkeit auf der GPU messen, Vergleich bei gleicher Dateigröße.
+3. Profiling der Generierung auf der GPU, danach Optionen (Fusion der Kette / eigener Typ ohne Blockskalen) mit Empfehlung zur Entscheidung vorlegen.
+4. Phase 4: Ollama gegen den Fork bauen.
+
+## Stand 2026-11-20 – Phase 3.1 (llama.cpp, CPU)
+
+### Erledigt
+- **llama.cpp-Patch** (Fork `ScarionWorkspace/llama.cpp`, Branch `littlebit`, Commit `3735b3a7f` auf Basis `b12257`), 6 Dateien, +118 Zeilen, **kein neuer ggml-Typ und keine neue Op**:
+  - `llama_model_base::create_tensor_lb()`: lädt statt eines dichten Gewichts die Faktoren `lb_u/lb_v/lb_g[_r]`, sofern vorhanden. Der Rank kommt aus der Datei. Die Faktoren werden in `model.lb` unter einem Stellvertreter-Tensor (`lb_u`) registriert. Verwendet in `create_tensor_qkv` (generisch für alle Architekturen mit separaten Q/K/V) und in `qwen3.cpp` für `wo` und die FFN.
+  - `build_lora_mm()`: Für registrierte Gewichte entsteht die Kette `mul(g) → mul_mat(v) → pad → mul_mat(u)` (+ Residualpfad, `add`). Nach dem Muster der vorhandenen Hadamard-Faltung.
+  - Loader: `lb_g` wird für `GGML_OP_MUL` platziert (wichtig für die GPU-Zuordnung).
+- **Erster Lauf (CPU):** „The capital of France is“ → „ Paris, and the city is the capital of the French Republic.“
+- **Werkzeuge:** `tools/lb_dump_logits.cpp` (Logits, Zwischentensoren über den eval-Callback, NLL-Modus), `scripts/check_llamacpp.py` (Toleranzstufen 1/2 inkl. Rauschboden), `scripts/check_llamacpp_steps.py` (Block 0 Schritt für Schritt), `scripts/ppl_littlebit_method.py` (PPL exakt wie LittleBits `eval.py`).
+
+### Korrektheit (8B, CPU, 4 Prompts + 4×512 WikiText-2, 2108 Positionen, `results/llamacpp/`)
+
+| | KL mittel | KL max | PPL |
+|---|---|---|---|
+| llama.cpp vs. Simulation (Flash-Attention auto = an) | 2,38e-4 | 5,2e-3 | |
+| llama.cpp vs. Simulation (Flash-Attention aus) | 2,36e-4 | 3,3e-3 | |
+| Rauschboden: Simulation FP32 vs. FP64 | 2,38e-4 | 5,6e-3 | |
+| llama.cpp vs. exakt (FA an) | 8,78e-4 | 5,3e-2 | −0,18 % |
+| Simulation vs. exakt | 8,89e-4 | 5,8e-2 | −0,10 % |
+
+**Stufe 1 und Stufe 2 bestanden** (mit FA an und aus).
+
+**Schrittweise, Block 0** (`results/llamacpp/steps_block0_cpu.txt`): Mit Flash-Attention aus stimmt llama.cpp an jedem Zwischenschritt bis auf ~1e-7 mit der Simulation überein. Beim 0.6B gilt das bis zur Blockausgabe, beim 8B bis zur FFN-Norm. Danach weicht das 8B um 1e-3 ab, weil der CPU-„repack“-Pfad für Matrizen mit mehreren Zeilen einen x86-Q8-Quantisierer nutzt (`127/max`, Rundung half-to-even) und nicht die Referenz. Welcher Pfad greift, hängt von der Shape ab. Die Implementierung der LittleBit-Kette ist damit bestätigt. Mit Flash-Attention an weicht die Attention-Ausgabe um 2e-4 ab (FA rechnet teils in F16). Das kippt einzelne Q8-Rundungen, ist also eine Eigenschaft des FA-Pfads und kein LittleBit-Fehler.
+
+**Korrektur der Toleranzstufe 1:** Die ursprüngliche Ableitung („nur die Summationsreihenfolge weicht ab → 10 % des Q8-Effekts reichen“) war falsch. Die Q8-Rundung ist unstetig: Jeder FP32-Unterschied kippt einzelne Quantisierungsstufen, und das pflanzt sich fort. Der gemessene Rauschboden (dieselbe Simulation in FP32 vs. FP64) liegt bei KL mittel 2,38e-4, also bei ~27 % des Q8-Effekts. llama.cpp liegt genau darauf. **Neue Stufe 1 = 2× Rauschboden: KL mittel ≤ 5e-4, KL max ≤ 2e-2, |ΔPPL| ≤ 0,25 %.** Feine Fehler findet die schrittweise Prüfung schärfer. Stufe 2 bleibt unverändert.
+
+### Geschwindigkeit (CPU, 8 Threads, erste Messung, unoptimiert)
+
+| Datei | Größe | pp512 | tg128 |
+|---|---|---|---|
+| 8B LittleBit, Embeddings Q4_K, lm_head Q6_K | 1,33 GiB | 53 ± 8 t/s | 27,4 t/s |
+| 8B LittleBit, Embeddings/lm_head F16 | 2,84 GiB | 53 ± 9 t/s | 18,0 t/s |
+
+Die Generierung ist schnell, die Prompt-Verarbeitung langsam. Mögliche Ursachen: viele kleine Ops (7 statt 1 pro Schicht) und `Q1_0` ohne AVX-512-Pfad. Vergleich mit dichtem Qwen3-8B folgt (Download läuft).
+
+### Läuft gerade (Hintergrund, bei Pause gestartet)
+- WikiText-2-PPL nach LittleBit-Methode (seqlen 2048, ~146 Fenster, ~46 s/Fenster auf der CPU) für exaktes `l` und für BF16-`l`. Referenzwert der Modellkarte: 24,48. Der wurde in BF16 auf einer A40 mit LittleBits `eval.py` gemessen, also mit BF16-gerundetem `l`. Zwischenstand nach 2 von 146 Fenstern: 22,4. Das ist noch nicht aussagekräftig.
+- Download Qwen3-8B für die Vergleichsquants.
+
+### Offen in Phase 3
+- PPL-Ergebnisse eintragen, Vergleichstabelle bei gleicher Dateigröße.
+- Prompt-Verarbeitung profilieren (welche Ops kosten Zeit?), AVX-512-Pfad für `Q1_0` prüfen.
+- GPU: ROCm für gfx1201 unter WSL einrichten, HIP-Build, `test-backend-ops` für `Q1_0` mit unseren Shapes, dieselben Prüfungen auf der GPU.
+- `llama-perplexity` (Standardmethode) zusätzlich, für den Vergleich mit anderen llama.cpp-Quants.
+
 ## Stand 2026-11-20 – Phase 2 (GGUF-Format) abgeschlossen
 
 ### Erledigt
