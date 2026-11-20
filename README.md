@@ -19,8 +19,8 @@ existing ggml kernels, without expanding them back to dense weights.
 |---|---|---|
 | 0 | Analysis (`docs/ANALYSIS.md`) | done |
 | 1 | Python reference + golden files | done |
-| 2 | GGUF format + converter | next |
-| 3 | llama.cpp (CPU, then HIP/ROCm on RX 9070 XT) | open |
+| 2 | GGUF format + converter (`docs/FORMAT.md`) | done |
+| 3 | llama.cpp (CPU, then HIP/ROCm on RX 9070 XT) | next |
 | 4 | Ollama | open |
 | 5 | More architectures, benchmarks | open |
 
@@ -56,6 +56,19 @@ littlebit-work/
   ollama/           (fork, branch littlebit)
   models/ golden/   (local data, never committed)
 ```
+
+## Converting a checkpoint
+
+```bash
+../.venv/bin/python convert_littlebit_to_gguf.py ../models/littlebit-qwen3-8b-0.55bpw \
+    --outfile ../gguf/lb-qwen3-8b-f16.gguf          # --l-round bf16 = LittleBit's own rounding of l
+# shrink embeddings/lm_head (LittleBit tensors are left untouched):
+../llama.cpp/build-cpu/bin/llama-quantize ../gguf/lb-qwen3-8b-f16.gguf ../gguf/lb-qwen3-8b-Q4_K_M.gguf Q4_K_M
+../.venv/bin/python scripts/gguf_size_report.py ../gguf/lb-qwen3-8b-Q4_K_M.gguf   # effective bpw
+```
+
+Qwen3-8B (LittleBit 0.55 bpw): 1364 MiB with Q4_K_M embeddings, i.e. 1.40 bpw for the whole file.
+Running it in llama.cpp is Phase 3 (not done yet).
 
 ## Quickstart (Phase 1: reference)
 

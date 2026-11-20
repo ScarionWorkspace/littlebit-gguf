@@ -21,13 +21,18 @@ NORMS = {
 }
 
 
-def _signs_and_scale(deq: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
-    """Q1_0 rows dequantized to ±d -> (signs int8, d >= 0). Rows must have one d for all blocks."""
-    d = np.abs(deq[:, :1])
-    if not np.array_equal(np.abs(deq), np.broadcast_to(d, deq.shape)):
+def _q1_0_signs_and_scale(raw: np.ndarray, shape: list[int]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Q1_0 raw blocks (18 bytes: FP16 d + 128 bits, LSB first, 1 = +d) -> (signs int8, d >= 0)
+    without expanding to float. All blocks of a row must share d (LittleBit factor layout)."""
+    rows, cols = shape
+    blocks = raw.reshape(rows, cols // 128, 18)
+    d = blocks[..., :2].copy().view(np.float16)[..., 0].astype(np.float64)   # [rows, nblk]
+    if not np.array_equal(d, np.broadcast_to(d[:, :1], d.shape)):
         raise ValueError("Q1_0 row with differing block scales: not a LittleBit factor")
-    signs = np.where(deq < 0, -1, 1).astype(np.int8)   # d == 0 rows: sign is irrelevant
-    return torch.from_numpy(signs), torch.from_numpy(d[:, 0].astype(np.float64))
+    bits = np.unpackbits(blocks[..., 2:], axis=-1, bitorder="little").reshape(rows, cols)
+    signs = (bits.astype(np.int8) * 2 - 1)
+    signs[d[:, 0] < 0] *= -1   # d is written as mean|x| >= 0, but be safe
+    return torch.from_numpy(signs), torch.from_numpy(np.abs(d[:, 0]))
 
 
 def load_gguf(path, dtype=torch.float64) -> Checkpoint:
@@ -50,16 +55,21 @@ def load_gguf(path, dtype=torch.float64) -> Checkpoint:
     tensors = {}
     for t in r.tensors:
         shape = [int(x) for x in reversed(t.shape)]  # numpy order: [rows, cols]
-        arr = gguf.quants.dequantize(t.data, t.tensor_type).reshape(shape)
+        if t.tensor_type == gguf.GGMLQuantizationType.Q1_0 and ".lb_" in t.name:
+            arr = _q1_0_signs_and_scale(np.asarray(t.data), shape)
+        elif t.tensor_type == gguf.GGMLQuantizationType.F16:
+            arr = np.asarray(t.data).reshape(shape)   # stays F16 (memory), cast on use
+        else:
+            arr = gguf.quants.dequantize(t.data, t.tensor_type).reshape(shape)
         tensors[t.name] = (t.tensor_type, arr)
 
     dense = {}
     lin_parts: dict[str, dict] = {}
     for name, (_, arr) in tensors.items():
         if name == "token_embd.weight":
-            dense["model.embed_tokens.weight"] = torch.from_numpy(arr.astype(np.float32))
+            dense["model.embed_tokens.weight"] = torch.from_numpy(np.array(arr))
         elif name == "output.weight":
-            dense["lm_head.weight"] = torch.from_numpy(arr.astype(np.float32))
+            dense["lm_head.weight"] = torch.from_numpy(np.array(arr))
         elif name == "output_norm.weight":
             dense["model.norm.weight"] = torch.from_numpy(arr.astype(np.float32))
         elif name.startswith("blk."):
@@ -76,10 +86,10 @@ def load_gguf(path, dtype=torch.float64) -> Checkpoint:
     linears = {}
     for prefix, parts in lin_parts.items():
         def path(sfx):
-            if f"lb_u{sfx}" not in parts:
+            if f"lb_u{sfx}" not in parts:  # values are (signs, d) tuples for lb_u / lb_v
                 return None
-            U, h = _signs_and_scale(parts[f"lb_u{sfx}"])
-            V, l = _signs_and_scale(parts[f"lb_v{sfx}"])
+            U, h = parts[f"lb_u{sfx}"]
+            V, l = parts[f"lb_v{sfx}"]
             # V holds the true rank r, U is padded to r_pad: mirror ggml_pad of the latent by
             # zero rows in V (l = 0), so the reference can multiply directly
             r, r_pad = V.shape[0], U.shape[1]
