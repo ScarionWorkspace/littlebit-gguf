@@ -11,7 +11,7 @@
 | Python | 3.12.3, venv unter `~/littlebit-work/.venv` |
 | Go | 1.26.10 |
 | CPU | Ryzen 7 7800X3D, 16 Threads. Flags: `avx2 avx512f avx512bw avx512dq avx512vl avx512cd avx512_vnni avx512_bf16 avx512_vbmi avx512_bitalg avx512_vpopcntdq avx512ifma` |
-| RAM in WSL | **15 GiB** (+4 GiB Swap), Windows hat 31 GB. WSL bekommt standardmäßig die Hälfte |
+| RAM in WSL | ursprünglich 15 GiB (+4 GiB Swap, Standard = halber Windows-RAM). **Seit 2026-11-20: 24 GB + 16 GB Swap** über `.wslconfig` (geprüft mit `free -h`: 23 GiB / 16 GiB) |
 | Platte | 954 GB frei |
 | ROCm / HIP | **nicht installiert** (`/opt/rocm` fehlt). In `/usr/lib/wsl/lib` nur D3D12/DXCore, kein `librocdxg` |
 | NVIDIA | entfällt (GTX 1080 steckt in einem anderen PC) |
@@ -28,15 +28,15 @@ Installiert: torch 2.15.0+cpu, transformers 4.57.6, numpy 2.5.5.
 **transformers bleibt auf 4.x**: LittleBit ist für 4.51 geschrieben, mit 5.x bricht schon das Laden
 (`device_map` braucht dort `accelerate`, `torch_dtype` ist veraltet).
 
-### Empfehlung: mehr RAM für WSL (optional, vor dem 8B-Benchmark)
+### Mehr RAM für WSL (umgesetzt 2026-11-20)
 
 Für Qwen3-8B-Vergleichsquants (`convert_hf_to_gguf.py` auf 16 GB BF16) und den 8B-Vergleich
-gegen LittleBits eigene Inferenz reichen 15 GiB knapp oder gar nicht. In Windows
+gegen LittleBits eigene Inferenz reichen 15 GiB knapp oder gar nicht. 24 GB lassen Windows (31 GB) genug Luft. In Windows
 `%UserProfile%\.wslconfig` anlegen bzw. ergänzen, danach in PowerShell `wsl --shutdown`:
 
 ```ini
 [wsl2]
-memory=26GB
+memory=24GB
 swap=16GB
 ```
 

@@ -35,18 +35,20 @@
 
 ### Erkenntnisse für Phase 2 (Format)
 - Wertebereiche der Skalen (`scripts/scale_stats.py`): `l` ∈ [1,6e-2; 0,12] (8B), in FP16 unproblematisch (rel. Rundung ≤4,8e-4).
-  **Im trainierten 8B sind ~0,1 % von `h` und `g` winzig** (bis 2e-11) und werden in FP16 zu 0 oder subnormal. Beim 0.6B-Init kommt das nicht vor. Der absolute Beitrag ist vernachlässigbar, wird aber in Phase 2 gemessen. Bei Bedarf `g` als F32 ablegen. `h` sitzt in der Q1_0-Blockskala und muss deshalb FP16 sein.
-- Der WSL-RAM ist für das 8B knapp. Die Referenz kommt mit 6,9 GB aus, die BF16-Konvertierung von Qwen3-8B für die Vergleichsquants braucht mehr.
+  **Im trainierten 8B sind ~0,1 % von `h` und `g` winzig** (bis 2e-11) und werden in FP16 zu 0 oder subnormal. Beim 0.6B-Init kommt das nicht vor. **Entscheidung (2026-11-20): `g` wird im GGUF als F32 gespeichert**, damit ist `g` verlustfrei (BF16 → F32 exakt). Die FP16-Unterlaufprüfung betrifft damit nur `h` und `l` (beide Q1_0-Blockskala). Bei `l` gibt es keinen Unterlauf (min. 1,6e-2). Bei `h` den Effekt der ~0,1 % winzigen Werte in Phase 2 messen.
+- WSL-RAM auf 24 GB + 16 GB Swap erhöht (2026-11-20, aktiv). Damit sind die BF16-Konvertierung von Qwen3-8B für die Vergleichsquants und der direkte 8B-Vergleich gegen LittleBit machbar.
 
 ### Entscheidungen (freigegeben am 2026-11-20, unverändert)
-1. Format-Variante A: Faktoren als `GGML_TYPE_Q1_0`, `h` und `l` in den Blockskalen, `g` separat.
+1. Format-Variante A: Faktoren als `GGML_TYPE_Q1_0`, `h` und `l` in den Blockskalen, `g` separat **als F32** (festgelegt 2026-11-20).
 2. Modelle: Korrektheit mit dem Qwen3-0.6B-Init, Benchmark mit `LittleBitLLM/littlebit-qwen3-8b-0.55bpw`.
 3. GTX 1080 / CUDA entfällt. GPU ist die RX 9070 XT (HIP, Fallback Vulkan).
 4. Repo-Name `littlebit-gguf`. Wird nach dem Phase-1-Merge und der Historienprüfung öffentlich (freigegeben am 2026-11-20).
 
+### Vorgaben für Phase 3 (Qualität)
+- **PPL des 8B zweimal messen und beide dokumentieren:** mit exaktem `l = v1·u2` (unsere Referenz bzw. FP16-Blockskala im GGUF) und mit auf BF16 gerundetem `l` (wie LittleBits Loader). Der veröffentlichte Wert von 24,48 (WikiText-2) stammt aus LittleBits Inferenz, also mit BF16-gerundetem `l`. Vergleichbar mit 24,48 ist nur die BF16-Variante. Die Differenz der beiden zeigt den Effekt der Rundung selbst. Die BF16-Variante lässt sich im GGUF erzeugen, wenn der Konverter `l` vor dem Schreiben auf BF16 rundet (Option `--l-round bf16`). In Python gibt es dafür bereits `load_checkpoint(..., l_round=torch.bfloat16)`.
+
 ### Offene Punkte
 - ROCm für gfx1201 unter WSL (vor Phase 3.3).
-- Optional: `.wslconfig` mit mehr RAM (siehe `SETUP.md`).
 - Verhalten von `llama-quantize` bei fremden Q1_0-Tensoren (Phase 2/3).
 
 ### Nächster Schritt
