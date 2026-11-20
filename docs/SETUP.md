@@ -40,9 +40,16 @@ memory=24GB
 swap=16GB
 ```
 
-### ROCm für die RX 9070 XT unter WSL2 (Recherche 2026-11-20, noch nicht installiert)
+### ROCm für die RX 9070 XT unter WSL2 – **installiert und geprüft (2026-11-20)**
 
-Nichts davon ist ausgeführt. Die Installation braucht `sudo` und ggf. ein Windows-Treiberupdate, deshalb erst nach Rückfrage.
+Ergebnis: `scripts/setup/install_rocm_wsl.sh` in einem separaten WSL-Fenster ausgeführt. `sudo` braucht ein Terminal, mit `!` in Claude Code geht es nicht.
+- Installiert: `rocm` 7.2.4.70204, `rocdxg-roct` 1.2.0 (`/opt/rocm/lib/librocdxg.so.1.2.0`), `hipcc` 1.1.1 (HIP 7.2.53211, AMD clang 22). Kein `amdgpu-dkms`.
+- `rocminfo` (mit `HSA_ENABLE_DXG_DETECTION=1`): Agent 2 = `gfx1201`, „AMD Radeon RX 9070 XT“, 64 CUs. Die iGPU des 7800X3D erscheint **nicht** als Agent, der Workaround mit dem Geräte-Manager war also nicht nötig.
+- HIP-Test (Vektoraddition, `--offload-arch=gfx1201`): Kernel läuft, Ergebnis korrekt. 16191 MiB VRAM, warpSize 32.
+- Hinweis: apt hat als Abhängigkeit zusätzlich Ubuntus eigene alte HIP/HSA-Bibliotheken installiert (`libamdhip64-5` 5.7.1, `libhsa-runtime64-1` 5.7.1 in `/usr/lib`). Beim llama.cpp-Build darauf achten, dass `/opt/rocm` verwendet wird (`-DCMAKE_PREFIX_PATH=/opt/rocm`, `HIPCXX=/opt/rocm/lib/llvm/bin/clang`), und mit `ldd` prüfen.
+- Die Windows-Adrenalin-Version ist nicht erfasst. Sie funktioniert offensichtlich.
+
+Recherche-Notizen (vor der Installation):
 
 Stand der Quellen:
 - **Offizieller Weg:** Adrenalin-Treiber für WSL2 (AMD nennt 26.2.2), dazu ROCm **7.2.x** und `librocdxg` 1.2.0. Die Kompatibilitätsmatrix von librocdxg führt RX 9070 / 9070 XT / 9070 GRE bei librocdxg 1.2.0 + ROCm 7.2.x. Ubuntu 24.04 wird unterstützt. Für ROCm vor 7.13 muss `HSA_ENABLE_DXG_DETECTION=1` gesetzt sein. Das Repo `ROCm/librocdxg` ist inzwischen veraltet, der Code liegt in `ROCm/rocm-systems`. Die Releases (`.deb`) gibt es aber weiter dort. librocdxg braucht nach eigener Aussage keine „Radeon Software for Linux“-Pakete.

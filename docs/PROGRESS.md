@@ -7,7 +7,7 @@
    `../.venv/bin/python scripts/ppl_littlebit_method.py --gguf ../gguf/littlebit-qwen3-8b-0.55bpw-l<none|bf16>-f16.gguf --tokenizer ../models/littlebit-qwen3-8b-0.55bpw --out results/llamacpp/ppl_wikitext2_s2048_qwen3-8b-l<none|bf16>-f16_cpu.json --resume`
    Danach beide Werte gegen 24,48 (Modellkarte) eintragen.
 2. **Download prüfen:** `Qwen/Qwen3-8B` nach `../models/Qwen3-8B` lief ebenfalls im Hintergrund. Falls unvollständig, `hf download` erneut aufrufen (setzt fort). Danach Vergleichsquants erzeugen (Q2_K, IQ2_XXS, IQ1_S, TQ1_0, Q4_K_M) und PPL/Größe/Geschwindigkeit messen.
-3. **GPU:** Installationsskript `scripts/setup/install_rocm_wsl.sh` liegt bereit (ROCm 7.2.4 + librocdxg 1.2.0, ohne Kernel-Treiber, Begründung in `SETUP.md`). Es wartet auf dein OK und muss von dir ausgeführt werden, weil es `sudo` braucht. Vorher in Windows die Adrenalin-Version prüfen (≥ 26.2.2).
+3. **GPU:** ROCm 7.2.4 und librocdxg 1.2.0 sind installiert, die RX 9070 XT wird erkannt, ein HIP-Testkernel läuft (Details in `SETUP.md`). Nächster Schritt, sobald die CPU frei ist: llama.cpp mit `-DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1201` nach `build-hip` bauen, dann `test-backend-ops -o MUL_MAT` (Q1_0) sowie `check_llamacpp.py --ngl 99` und `check_llamacpp_steps.py` auf der GPU.
 4. Danach PR `phase3-llamacpp` → `main`.
 
 **Zu prüfen:** Im Commit `3735b3a7f` des llama.cpp-Forks steht die arXiv-Nummer 2506.13771. Sie wurde erst nachträglich gegen das LittleBit-README geprüft und stimmt (LittleBit, NeurIPS 2025). Kein Handlungsbedarf.
