@@ -3,11 +3,11 @@
 ## Stand 2026-11-20 (Pause) – Phase 3.1 (llama.cpp, CPU): Modell läuft nativ, Korrektheit bestätigt, PPL läuft
 
 **Zum Weitermachen:**
-1. **PPL-Läufe prüfen.** Sie liefen bei Sitzungsende im Hintergrund weiter: zuerst exaktes `l`, dann BF16-`l`, je ~146 Fenster à ~46 s, also ~1 h 50 pro Variante. Der Fortschritt steht nach jedem Fenster in `results/llamacpp/ppl_wikitext2_s2048_qwen3-8b-l{none,bf16}-f16_cpu.json`, die Logs in `../models/ppl-{none,bf16}.log`. Wenn ein Lauf abgebrochen ist, mit demselben Befehl plus `--resume` fortsetzen:
+1. **PPL-Läufe prüfen.** Bei der ersten Pause sind sie nach 4 Fenstern abgebrochen und wurden um 22:15 mit `--resume` neu gestartet (jetzt mit `setsid nohup`): zuerst exaktes `l`, dann BF16-`l`, je ~146 Fenster à ~46 s, also ~1 h 50 pro Variante. Der Fortschritt steht nach jedem Fenster in `results/llamacpp/ppl_wikitext2_s2048_qwen3-8b-l{none,bf16}-f16_cpu.json`, die Logs in `../models/ppl-{none,bf16}.log`. Wenn ein Lauf abgebrochen ist, mit demselben Befehl plus `--resume` fortsetzen:
    `../.venv/bin/python scripts/ppl_littlebit_method.py --gguf ../gguf/littlebit-qwen3-8b-0.55bpw-l<none|bf16>-f16.gguf --tokenizer ../models/littlebit-qwen3-8b-0.55bpw --out results/llamacpp/ppl_wikitext2_s2048_qwen3-8b-l<none|bf16>-f16_cpu.json --resume`
    Danach beide Werte gegen 24,48 (Modellkarte) eintragen.
 2. **Download prüfen:** `Qwen/Qwen3-8B` nach `../models/Qwen3-8B` lief ebenfalls im Hintergrund. Falls unvollständig, `hf download` erneut aufrufen (setzt fort). Danach Vergleichsquants erzeugen (Q2_K, IQ2_XXS, IQ1_S, TQ1_0, Q4_K_M) und PPL/Größe/Geschwindigkeit messen.
-3. **GPU:** Die ROCm-Recherche steht in `SETUP.md`. Die Installation braucht `sudo` und deine Rückfrage. Offen sind die genauen apt-Befehle für ROCm 7.2.x und deine Adrenalin-Version.
+3. **GPU:** Installationsskript `scripts/setup/install_rocm_wsl.sh` liegt bereit (ROCm 7.2.4 + librocdxg 1.2.0, ohne Kernel-Treiber, Begründung in `SETUP.md`). Es wartet auf dein OK und muss von dir ausgeführt werden, weil es `sudo` braucht. Vorher in Windows die Adrenalin-Version prüfen (≥ 26.2.2).
 4. Danach PR `phase3-llamacpp` → `main`.
 
 **Zu prüfen:** Im Commit `3735b3a7f` des llama.cpp-Forks steht die arXiv-Nummer 2506.13771. Sie wurde erst nachträglich gegen das LittleBit-README geprüft und stimmt (LittleBit, NeurIPS 2025). Kein Handlungsbedarf.
