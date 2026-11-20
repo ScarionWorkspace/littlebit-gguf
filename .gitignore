@@ -1,0 +1,27 @@
+# never commit weights, checkpoints, data, secrets
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.npy
+models/
+golden/
+datasets/
+data/
+*.parquet
+.env
+.env.*
+*token*
+!**/tokenizer*.py
+hf_cache/
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+# local
+.claude/settings.local.json

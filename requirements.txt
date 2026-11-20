@@ -1,0 +1,9 @@
+# CPU-only is enough for the reference. Install torch from https://download.pytorch.org/whl/cpu
+torch>=2.6
+numpy>=2.0
+safetensors>=0.4
+# transformers 4.x: needed for tokenizers, the HF comparison and LittleBit's own code (written for 4.51)
+transformers>=4.51,<5
+accelerate
+huggingface_hub
+pytest
