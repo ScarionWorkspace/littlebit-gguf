@@ -1,6 +1,17 @@
 # Fortschritt
 
-## Stand 2026-11-20 – Phase 3.1 (llama.cpp, CPU) läuft: Modell läuft nativ, Korrektheit bestätigt
+## Stand 2026-11-20 (Pause) – Phase 3.1 (llama.cpp, CPU): Modell läuft nativ, Korrektheit bestätigt, PPL läuft
+
+**Zum Weitermachen:**
+1. **PPL-Läufe prüfen.** Sie liefen bei Sitzungsende im Hintergrund weiter: zuerst exaktes `l`, dann BF16-`l`, je ~146 Fenster à ~46 s, also ~1 h 50 pro Variante. Der Fortschritt steht nach jedem Fenster in `results/llamacpp/ppl_wikitext2_s2048_qwen3-8b-l{none,bf16}-f16_cpu.json`, die Logs in `../models/ppl-{none,bf16}.log`. Wenn ein Lauf abgebrochen ist, mit demselben Befehl plus `--resume` fortsetzen:
+   `../.venv/bin/python scripts/ppl_littlebit_method.py --gguf ../gguf/littlebit-qwen3-8b-0.55bpw-l<none|bf16>-f16.gguf --tokenizer ../models/littlebit-qwen3-8b-0.55bpw --out results/llamacpp/ppl_wikitext2_s2048_qwen3-8b-l<none|bf16>-f16_cpu.json --resume`
+   Danach beide Werte gegen 24,48 (Modellkarte) eintragen.
+2. **Download prüfen:** `Qwen/Qwen3-8B` nach `../models/Qwen3-8B` lief ebenfalls im Hintergrund. Falls unvollständig, `hf download` erneut aufrufen (setzt fort). Danach Vergleichsquants erzeugen (Q2_K, IQ2_XXS, IQ1_S, TQ1_0, Q4_K_M) und PPL/Größe/Geschwindigkeit messen.
+3. **GPU:** Die ROCm-Recherche steht in `SETUP.md`. Die Installation braucht `sudo` und deine Rückfrage. Offen sind die genauen apt-Befehle für ROCm 7.2.x und deine Adrenalin-Version.
+4. Danach PR `phase3-llamacpp` → `main`.
+
+**Zu prüfen:** Im Commit `3735b3a7f` des llama.cpp-Forks steht die arXiv-Nummer 2506.13771. Sie wurde erst nachträglich gegen das LittleBit-README geprüft und stimmt (LittleBit, NeurIPS 2025). Kein Handlungsbedarf.
+
 
 ### Erledigt
 - **llama.cpp-Patch** (Fork `ScarionWorkspace/llama.cpp`, Branch `littlebit`, Commit `3735b3a7f` auf Basis `b12257`), 6 Dateien, +118 Zeilen, **kein neuer ggml-Typ und keine neue Op**:
@@ -35,9 +46,9 @@
 
 Die Generierung ist schnell, die Prompt-Verarbeitung langsam. Mögliche Ursachen: viele kleine Ops (7 statt 1 pro Schicht) und `Q1_0` ohne AVX-512-Pfad. Vergleich mit dichtem Qwen3-8B folgt (Download läuft).
 
-### Läuft gerade
-- WikiText-2-PPL nach LittleBit-Methode (seqlen 2048, ~146 Fenster, ~45 s/Fenster auf der CPU) für exaktes `l` und für BF16-`l`. Referenzwert der Modellkarte: 24,48 (BF16 auf A40, BF16-gerundetes `l`).
-- Download Qwen3-8B für die Vergleichsquants (Q2_K, IQ2_XXS, IQ1_S, TQ1_0, Q4_K_M).
+### Läuft gerade (Hintergrund, bei Pause gestartet)
+- WikiText-2-PPL nach LittleBit-Methode (seqlen 2048, ~146 Fenster, ~46 s/Fenster auf der CPU) für exaktes `l` und für BF16-`l`. Referenzwert der Modellkarte: 24,48. Der wurde in BF16 auf einer A40 mit LittleBits `eval.py` gemessen, also mit BF16-gerundetem `l`. Zwischenstand nach 2 von 146 Fenstern: 22,4. Das ist noch nicht aussagekräftig.
+- Download Qwen3-8B für die Vergleichsquants.
 
 ### Offen in Phase 3
 - PPL-Ergebnisse eintragen, Vergleichstabelle bei gleicher Dateigröße.

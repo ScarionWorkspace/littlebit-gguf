@@ -1,0 +1,15 @@
+{
+ "gguf": "littlebit-qwen3-8b-0.55bpw-lnone-f16.gguf",
+ "seqlen": 2048,
+ "n_tokens_total": 299078,
+ "n_chunks_total": 146,
+ "n_chunks_done": 3,
+ "flash_attn": "auto",
+ "ngl": 0,
+ "ppl": 26.84801488569941,
+ "chunk_nll_sums": [
+  5908.507582119278,
+  6822.128008982203,
+  7474.43277301411
+ ]
+}
