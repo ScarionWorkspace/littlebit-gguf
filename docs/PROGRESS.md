@@ -1,5 +1,50 @@
 # Fortschritt
 
+## Stand 2026-11-20 – Phase 2 (GGUF-Format) abgeschlossen
+
+### Erledigt
+- **Simulation der llama.cpp-Numerik** (`littlebit_ref/numerics.py`), im Quellcode von ggml `b12257` nachgelesen: `Q1_0`-Matmul quantisiert die Aktivierung auf `Q8_0` (Blöcke à 32, `d = amax/127` als FP16, `roundf`). Die Simulation ist **bit-exakt** zu gguf-py. `h` und `l` werden FP16-Blockskalen, der KV-Cache ist standardmäßig F16, F16-Gewichte lassen die Aktivierungen in F32.
+- **Messung des Effekts** (`scripts/measure_numerics.py`, `results/numerics/`), trainiertes 8B, 4 Prompts + 4×512 WikiText-2-Tokens:
+
+  | Variante (FP32) vs. exakt FP64 | KL max | KL mittel | PPL |
+  |---|---|---|---|
+  | FP32 exakt | 2,5e-11 | 1,4e-12 | ±0,000 % |
+  | + FP16-Skalen `h`, `l` | 3,3e-6 | 1,2e-7 | +0,001 % |
+  | + F16-KV-Cache | 5,6e-6 | 6,9e-8 | −0,001 % |
+  | + Q8_0-Aktivierungen | 5,0e-2 | 8,9e-4 | −0,096 % |
+  | alles (= llama.cpp) | 5,8e-2 | 8,9e-4 | −0,099 % |
+
+  Die Q8-Aktivierungen machen praktisch den ganzen Effekt aus und sind für die Qualität unkritisch. Pro einzelner Schicht beträgt der Q8-Fehler 0,4–1,0 % (rel. L2), beim 0.6B-Init und beim 8B gleich. Beim 0.6B-Init explodiert er im ganzen Modell (KL mittel 0,28), weil das untrainierte Modell chaotisch ist. Ganzmodell-Vergleiche mit Toleranz deshalb **nur am 8B**, das 0.6B nur schichtweise.
+- **Konverter** `convert_littlebit_to_gguf.py` → Format in `docs/FORMAT.md`. Nutzt den Qwen3-Konverter von llama.cpp für Metadaten, Tokenizer und dichte Tensoren. Die LittleBit-Tensoren werden selbst erzeugt, weil der normale Pfad alles nach FP32 wandelt und damit die int32-Bitwörter zerstören würde. Optionen `--outtype` (Embeddings/lm_head) und `--l-round none|bf16`. 8B in 38 s, 12 GB RAM.
+  Abweichung zu `ANALYSIS.md`: `V` wird **nicht** aufgefüllt (behält Rank `r`), nur `U` auf Vielfache von 128. Im Graph kommt dafür ein `ggml_pad` hinzu. Spart beim 0.6B 11 % der Faktorgröße.
+- **Roundtrip-Test** `tests/test_gguf_roundtrip.py`: GGUF → Python. Vorzeichen bit-exakt, `g` exakt, `h`/`l` exakt FP16-gerundet, Füllzeilen 0, Logits gleich der Referenz mit FP16-Skalen (rel. ≤ 1e-6). Grün für 0.6B-Init und 8B (`l_round` none und bf16).
+- **`llama-quantize`** (gebaut aus dem Branch `littlebit`, CPU) lässt die `lb_*`-Tensoren unverändert und quantisiert nur Embeddings und lm_head. Geprüft mit Q4_K_M und Q2_K.
+- **Effektive bpw** (`scripts/gguf_size_report.py`, `results/size_*.json`), Bezug ist immer die Parameterzahl des dichten Modells:
+
+  | Modell | Datei | bpw ganze Datei | bpw Linear |
+  |---|---|---|---|
+  | 0.6B-Init, Embeddings F16 | 340 MiB | 4,78 | 0,70 (Embeddings = 87 % der Datei) |
+  | 8B, Embeddings/lm_head F16 | 2917 MiB | 2,99 | 0,648 |
+  | 8B, `llama-quantize Q4_K_M` | 1364 MiB | 1,40 | 0,648 |
+  | 8B, `llama-quantize Q2_K` | 1225 MiB | 1,25 | 0,648 |
+
+  Linear 0,648 statt 0,548 bpw: Die `Q1_0`-Blockskalen kosten 12,5 %, das Auffüllen von `U` (Ranks 544/208/824 → 640/256/896) den Rest. Zum Vergleich: das originale Qwen3-8B in Q2_K hat etwa 3,3 GB (in Phase 3 selbst nachmessen).
+- llama.cpp-Branch `littlebit` (= `b12257`, unverändert) baut auf der CPU (`build-cpu`, 3 min).
+
+### Toleranzen für Phase 3 (aus der Messung abgeleitet, `littlebit_ref/metrics.py`)
+
+| Stufe | Vergleich | Kriterium |
+|---|---|---|
+| 0 `TOL_FP_REFERENCE` | Python gegen Python | rel_max ≤ 1e-4, KL_max ≤ 1e-6 |
+| 1 `TOL_LLAMACPP_VS_SIM` | llama.cpp gegen Simulation (`Numerics.llamacpp_q1_0`), 8B | KL mittel ≤ 1e-4, KL max ≤ 1e-2, \|ΔPPL\| ≤ 0,05 % |
+| 2 `TOL_LLAMACPP_VS_EXACT` | llama.cpp gegen exakte Referenz, 8B | KL mittel ≤ 2e-3, KL max ≤ 0,1, \|ΔPPL\| ≤ 0,5 % |
+| Schicht | einzelne Schicht mit Golden-Eingaben, gegen exakt | rel. L2 ≤ 2 % |
+
+Begründung: Stufe 2 ist etwa das Doppelte des gemessenen Q8-Effekts. Stufe 1 erlaubt 10 % davon, weil dieselbe Quantisierung simuliert wird und nur Summationsreihenfolge und Implementierungsdetails abweichen dürfen. Eine knapp gekippte Q8-Rundung kann allerdings eine Stufe springen, deshalb nicht enger. Wenn llama.cpp Stufe 1 knapp verfehlt, Stufe 2 aber klar einhält, zuerst die Ursache suchen (z. B. Flash-Attention oder andere RoPE-Variante), bevor die Grenze gelockert wird.
+
+### Nächster Schritt
+Phase 3.1: In llama.cpp (Branch `littlebit`) die Tensoren `lb_u/lb_v/lb_g(_r)` für Qwen3 als optionale Tensoren laden und `build_lora_mm` für Projektionen mit LittleBit-Faktoren auf die Kette `mul → mul_mat → pad → mul_mat` (+ Residual) umleiten. Dann Logits auf der CPU gegen die Golden Files (8B, Stufen 1 und 2) und schichtweise gegen das 0.6B-Init prüfen. Danach `test-backend-ops` für `Q1_0` mit unseren Shapes, PPL (exaktes und BF16-`l`) und `llama-bench`.
+
 ## Stand 2026-11-20 – Phase 1 (Python-Referenz) abgeschlossen
 
 ### Erledigt
@@ -49,7 +94,6 @@
 
 ### Offene Punkte
 - ROCm für gfx1201 unter WSL (vor Phase 3.3).
-- Verhalten von `llama-quantize` bei fremden Q1_0-Tensoren (Phase 2/3).
 
-### Nächster Schritt
-Phase 2: `convert_littlebit_to_gguf.py` (Q1_0-Faktoren, F32-`g`, Metadaten `littlebit.*`), Roundtrip-Test GGUF → Python-Referenz, effektive bpw der ganzen Datei. Vorher die Python-Simulation der Q8-Aktivierungen als Grundlage für die Toleranz in Phase 3.
+### Nächster Schritt (Stand Phase 1, erledigt)
+Phase 2, siehe oben.

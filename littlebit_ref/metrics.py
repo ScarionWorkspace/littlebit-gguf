@@ -35,8 +35,25 @@ def logits_stats(ref: torch.Tensor, test: torch.Tensor) -> dict:
 
 
 # Tolerances (see docs/PROGRESS.md, "Toleranzen"). Keys checked by `within`.
-TOL_FP_REFERENCE = {"rel_max": 1e-4, "kl_max": 1e-6}      # same math, FP32 vs FP64/other FP32 impl.
+# Level 0: Python vs. Python, same math (FP32/FP64, different implementations).
+TOL_FP_REFERENCE = {"rel_max": 1e-4, "kl_max": 1e-6}
+
+# Levels for llama.cpp with Q1_0, derived from results/numerics/littlebit-qwen3-8b-0.55bpw.json
+# (trained 8B, 4 prompts + 4x512 WikiText-2 tokens). The simulation of llama.cpp's numerics
+# (Q8_0 activations, FP16 scales, F16 KV cache) vs. the exact FP64 reference measured:
+#   KL mean 8.9e-4, KL max 5.8e-2, PPL -0.10 %. Q8_0 activations are ~100 % of that.
+# Level 1: llama.cpp vs. the *simulation* (Numerics.llamacpp_q1_0). Same quantization, only
+#   summation order / implementation details differ; allow 10 % of the Q8 effect.
+TOL_LLAMACPP_VS_SIM = {"kl_mean": 1e-4, "kl_max": 1e-2, "ppl_delta_abs": 5e-4}
+# Level 2: llama.cpp vs. the *exact* reference: about 2x the measured Q8 effect.
+TOL_LLAMACPP_VS_EXACT = {"kl_mean": 2e-3, "kl_max": 1e-1, "ppl_delta_abs": 5e-3}
+# Per single layer (teacher forced, golden layers.npz inputs), relative L2 error vs. exact.
+# Measured Q8 effect: 0.41-1.0 % (0.6B init and 8B alike) -> 2x.
+TOL_LAYER_LLAMACPP_VS_EXACT_REL_L2 = 2e-2
 
 
 def within(stats: dict, tol: dict) -> bool:
-    return all(stats[k] <= v for k, v in tol.items())
+    """`ppl_delta_abs` is compared as |ppl_test/ppl_ref - 1|; all other keys directly."""
+    def val(k):
+        return abs(stats["ppl_delta_rel"]) if k == "ppl_delta_abs" else stats[k]
+    return all(val(k) <= v for k, v in tol.items())

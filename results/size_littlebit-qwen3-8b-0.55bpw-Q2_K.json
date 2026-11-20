@@ -1,0 +1,24 @@
+{
+ "file": "littlebit-qwen3-8b-0.55bpw-lnone-Q2_K.gguf",
+ "file_MiB": 1224.8313903808594,
+ "dense_params": 8190735360,
+ "linear_params": 6945767424,
+ "bpw_whole_file": 1.2544209949911018,
+ "bpw_linear_layers": 0.6477156929347826,
+ "littlebit_eff_bit_target": 0.550000011920929,
+ "parts_MiB": {
+  "embeddings": 194.7421875,
+  "littlebit_factors": 526.18359375,
+  "littlebit_g": 10.125,
+  "lm_head": 486.85546875,
+  "norms": 1.17578125
+ },
+ "parts_share": {
+  "embeddings": 0.1589950984514246,
+  "littlebit_factors": 0.4295967574658452,
+  "littlebit_g": 0.008266443919968157,
+  "lm_head": 0.39748774612856147,
+  "norms": 0.0009599535570642035
+ },
+ "metadata_and_header_MiB": 5.749359130859375
+}

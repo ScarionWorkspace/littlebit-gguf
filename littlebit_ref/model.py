@@ -12,26 +12,44 @@ from typing import Callable
 import torch
 
 from .checkpoint import Checkpoint, LBLinear, LBPath
+from .numerics import QK1_0, Numerics, fp16_roundtrip, q8_0_roundtrip
+
+EXACT = Numerics.exact()
 
 
-def lb_path_forward(x: torch.Tensor, p: LBPath) -> torch.Tensor:
-    """((((x * g) @ V^T) * l) @ U^T) * h   for x [..., in]"""
+def lb_path_forward(x: torch.Tensor, p: LBPath, num: Numerics = EXACT) -> torch.Tensor:
+    """((((x * g) @ V^T) * l) @ U^T) * h   for x [..., in]
+
+    With `num` set, mirrors the llama.cpp graph  mul(x, g) -> mul_mat(V_q1_0, .) -> mul_mat(U_q1_0, .)
+    where l and h are the Q1_0 block scales of V and U.
+    """
     U, V = p.U.to(x.dtype), p.V.to(x.dtype)  # signs are stored as int8 to save memory
-    return ((((x * p.g) @ V.T) * p.l) @ U.T) * p.h
+    l, h = p.l, p.h
+    if num.scales_fp16:
+        l, h = fp16_roundtrip(l), fp16_roundtrip(h)
+    t = x * p.g
+    if num.act_q8_0:
+        t = q8_0_roundtrip(t)
+    t = (t @ V.T) * l
+    if num.act_q8_0:
+        # U's rank dim is padded to a multiple of 128 in GGUF; the padding entries of t are 0
+        r = t.shape[-1]
+        t = q8_0_roundtrip(torch.nn.functional.pad(t, (0, (-r) % QK1_0)))[..., :r]
+    return (t @ U.T) * h
 
 
-def lb_linear(x: torch.Tensor, lin: LBLinear) -> torch.Tensor:
-    y = lb_path_forward(x, lin.main)
+def lb_linear(x: torch.Tensor, lin: LBLinear, num: Numerics = EXACT) -> torch.Tensor:
+    y = lb_path_forward(x, lin.main, num)
     if lin.residual is not None:
-        y = y + lb_path_forward(x, lin.residual)
+        y = y + lb_path_forward(x, lin.residual, num)
     if lin.bias is not None:
         y = y + lin.bias
     return y
 
 
-def linear(x: torch.Tensor, w) -> torch.Tensor:
+def linear(x: torch.Tensor, w, num: Numerics = EXACT) -> torch.Tensor:
     if isinstance(w, LBLinear):
-        return lb_linear(x, w)
+        return lb_linear(x, w, num)
     return x @ w.T.to(x.dtype)
 
 
@@ -54,11 +72,12 @@ class Qwen3Ref:
     PROJ = ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj",
             "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"]
 
-    def __init__(self, config: dict, weights: dict, linears: dict, dtype=None):
+    def __init__(self, config: dict, weights: dict, linears: dict, dtype=None, numerics: Numerics = EXACT):
         """weights: dense tensors by HF name; linears: HF prefix -> LBLinear or dense W [out, in]."""
         self.c = config
         self.w = weights
         self.lin = linears
+        self.num = numerics
         self.n_layer = config["num_hidden_layers"]
         self.n_head = config["num_attention_heads"]
         self.n_kv = config["num_key_value_heads"]
@@ -72,10 +91,10 @@ class Qwen3Ref:
             raise ValueError("no lm_head.weight and embeddings are not tied")
 
     @classmethod
-    def from_checkpoint(cls, ck: Checkpoint, dtype=None) -> "Qwen3Ref":
-        """dtype: compute dtype (default: dtype of the scales)."""
+    def from_checkpoint(cls, ck: Checkpoint, dtype=None, numerics: Numerics = EXACT) -> "Qwen3Ref":
+        """dtype: compute dtype (default: dtype of the scales). numerics: llama.cpp simulation."""
         any_lin = next(iter(ck.linears.values()))
-        return cls(ck.config, ck.dense, ck.linears, dtype=dtype or any_lin.main.h.dtype)
+        return cls(ck.config, ck.dense, ck.linears, dtype=dtype or any_lin.main.h.dtype, numerics=numerics)
 
     @torch.no_grad()
     def forward(self, ids: torch.Tensor, hook: Callable[[str, torch.Tensor], None] | None = None) -> torch.Tensor:
@@ -92,7 +111,7 @@ class Qwen3Ref:
 
             def proj(name, x):
                 hook(f"{P}{name}.in", x)
-                y = linear(x, self.lin[P + name])
+                y = linear(x, self.lin[P + name], self.num)
                 hook(f"{P}{name}.out", y)
                 return y
 
@@ -103,6 +122,8 @@ class Qwen3Ref:
             q = rms_norm(q, self.w[P + "self_attn.q_norm.weight"], self.eps)
             k = rms_norm(k, self.w[P + "self_attn.k_norm.weight"], self.eps)
             q, k = rope(q, pos, self.theta), rope(k, pos, self.theta)
+            if self.num.kv_f16:  # K is cached after RoPE
+                k, v = fp16_roundtrip(k), fp16_roundtrip(v)
             k = k.repeat_interleave(rep, dim=1)
             v = v.repeat_interleave(rep, dim=1)
             att = torch.einsum("thd,shd->hts", q, k) / math.sqrt(self.hd) + mask

@@ -1,0 +1,22 @@
+{
+ "file": "qwen3-0.6b-lb-init-0.55-f16.gguf",
+ "file_MiB": 339.677001953125,
+ "dense_params": 596049920,
+ "linear_params": 440401920,
+ "bpw_whole_file": 4.7805009620670695,
+ "bpw_linear_layers": 0.7037760416666666,
+ "littlebit_eff_bit_target": 0.550000011920929,
+ "parts_MiB": {
+  "embeddings": 296.75,
+  "littlebit_factors": 34.7607421875,
+  "littlebit_g": 2.1875,
+  "norms": 0.25
+ },
+ "parts_share": {
+  "embeddings": 0.8736240554812454,
+  "littlebit_factors": 0.10233469439387285,
+  "littlebit_g": 0.006439941436782559,
+  "norms": 0.0007359933070608639
+ },
+ "metadata_and_header_MiB": 5.728759765625
+}
