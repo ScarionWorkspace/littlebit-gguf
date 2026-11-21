@@ -9,4 +9,7 @@ mkdir -p "$here/bin"
 g++ -O2 -std=c++17 "$here/lb_dump_logits.cpp" -I"$LLAMA/include" -I"$LLAMA/ggml/include" \
     -L"$LLAMA/$BUILD/bin" -lllama -lggml -lggml-base -Wl,-rpath,"$LLAMA/$BUILD/bin" \
     -o "$here/bin/lb_dump_logits-$BUILD"
-echo "built $here/bin/lb_dump_logits-$BUILD"
+g++ -O2 -std=c++17 "$here/lb_bench_linear.cpp" -I"$LLAMA/ggml/include" \
+    -L"$LLAMA/$BUILD/bin" -lggml -lggml-base -Wl,-rpath,"$LLAMA/$BUILD/bin" \
+    -o "$here/bin/lb_bench_linear-$BUILD"
+echo "built $here/bin/lb_dump_logits-$BUILD $here/bin/lb_bench_linear-$BUILD"

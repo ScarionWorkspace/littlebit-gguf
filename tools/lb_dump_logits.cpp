@@ -1,7 +1,7 @@
 // Dump llama.cpp logits for a fixed token sequence (all positions), for comparison with
 // the Python reference. Build: tools/build_tools.sh. MIT license.
 //
-// usage: lb_dump_logits <model.gguf> <ids.i32> <out.f32> [n_threads] [flash_attn: auto|on|off] [n_gpu_layers] [names] [window]
+// usage: lb_dump_logits <model.gguf> <ids.i32> <out.f32> [n_threads] [flash_attn: auto|on|off] [n_gpu_layers] [names] [window] [n_ubatch]
 //   ids.i32: raw little-endian int32 token ids
 //   out.f32: raw float32 logits, row-major [n_tokens, n_vocab]
 //            if the name ends in ".nll": instead float64 NLL of ids[i+1] given position i, [n_tokens-1]
@@ -10,11 +10,14 @@
 //   window:  optional; if > 0, ids are split into independent windows of this length (each starts at
 //            position 0 with an empty KV cache) and the outputs are concatenated. Saves reloading the
 //            model per window (perplexity runs).
+//   n_ubatch: optional physical batch size (default: whole window). Small values (<= 8) send every
+//            token through the decode code path, e.g. the fused LittleBit kernels.
 #include "ggml-backend.h"
 #include "llama.h"
 
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -30,6 +33,12 @@ struct dump_state {
 
 static bool dump_cb(struct ggml_tensor * t, bool ask, void * user_data) {
     auto * st = static_cast<dump_state *>(user_data);
+    static const bool print_nodes = getenv("LB_PRINT_NODES") != nullptr;
+    if (ask && print_nodes) {
+        fprintf(stderr, "node %-24s %-10s ne=[%lld,%lld] src0=%s src1=%s\n", ggml_get_name(t), ggml_op_name(t->op),
+                (long long) t->ne[0], (long long) t->ne[1], t->src[0] ? ggml_get_name(t->src[0]) : "-",
+                t->src[1] ? ggml_get_name(t->src[1]) : "-");
+    }
     const bool want = st->names.count(ggml_get_name(t)) > 0 && t->type == GGML_TYPE_F32;
     if (ask) {
         return want;
@@ -55,6 +64,7 @@ int main(int argc, char ** argv) {
     dump_state st;
     st.prefix = argv[3];
     const int window_arg = argc > 8 ? atoi(argv[8]) : 0;
+    const int ubatch_arg = argc > 9 ? atoi(argv[9]) : 0;
     if (argc > 7 && strcmp(argv[7], "-") != 0) {
         std::stringstream ss(argv[7]);
         for (std::string item; std::getline(ss, item, ',');) {
@@ -81,7 +91,7 @@ int main(int argc, char ** argv) {
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = n;
     cp.n_batch = n;
-    cp.n_ubatch = n;
+    cp.n_ubatch = ubatch_arg > 0 ? std::min(ubatch_arg, n) : n;
     cp.n_threads = n_threads;
     cp.n_threads_batch = n_threads;
     cp.flash_attn_type = !strcmp(fa, "on") ? LLAMA_FLASH_ATTN_TYPE_ENABLED

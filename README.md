@@ -21,7 +21,7 @@ run on llama.cpp's existing `Q1_0` kernels. Nothing is expanded back to dense we
 | 0 | Analysis (`docs/ANALYSIS.md`) | done |
 | 1 | Python reference + golden files | done |
 | 2 | GGUF format + converter (`docs/FORMAT.md`) | done |
-| 3 | llama.cpp: CPU + HIP (RX 9070 XT), correctness, PPL, baselines, profiling (`docs/PROFILING.md`) | done; speed optimization next |
+| 3 | llama.cpp: CPU + HIP (RX 9070 XT), correctness, PPL, baselines, profiling, fused GPU kernels (`docs/PROFILING.md`) | done; further kernel tuning possible |
 | 4 | Ollama | open |
 | 5 | Larger models, more architectures | open |
 
@@ -45,8 +45,8 @@ latent scale, compared to 24.475 on the model card (+0.06 %).
 |---|---:|---:|---:|---:|
 | **Qwen3-1.7B Q4_K_M** (dense) | 1223 MiB | 5.05 | **16.90** | **241** |
 | Qwen3-4B IQ2_XXS (dense) | 1189 MiB | 2.48 | 27.00 | 169 |
-| **LittleBit Qwen3-8B**, embeddings Q2_K | 1225 MiB | 1.25 | 24.70 | 88 |
-| **LittleBit Qwen3-8B**, embeddings Q4_K / lm_head Q6_K | 1364 MiB | 1.40 | 24.58 | 69 |
+| **LittleBit Qwen3-8B**, embeddings Q2_K | 1225 MiB | 1.25 | 24.70 | 88 (unfused) |
+| **LittleBit Qwen3-8B**, embeddings Q4_K / lm_head Q6_K | 1364 MiB | 1.40 | 24.58 | 69 (unfused), **140 (fused)** |
 | Qwen3-8B IQ1_S | 2018 MiB | 2.07 | 32.63 | 155 |
 | Qwen3-8B Q2_K | 3130 MiB | 3.21 | 10.84 | 130 |
 | Qwen3-8B Q4_K_M | 4795 MiB | 4.91 | 9.82 | 102 |
@@ -59,9 +59,11 @@ Even fully trained (the paper's Llama-3-8B ratio of 2.3× FP16 PPL), an 8B would
 more promising case is **larger models** (27B and up), which tolerate extreme compression better. That
 needs a trained checkpoint (none published yet).
 
-**Speed.** Generation is limited by the number of GPU kernels (about 2300 small kernels per token), not
-by memory bandwidth: the `Q1_0` matmuls reach only ~80 GB/s of ~640 GB/s. A fused GPU kernel for the factor
-chain is the next step (`docs/PROFILING.md`).
+**Speed.** Unfused, generation is limited by the number of GPU kernels (about 2300 small kernels per
+token). The llama.cpp fork now fuses each LittleBit projection into 2 GPU kernels for decoding
+(`ggml/src/ggml-cuda/littlebit.cu`): **82 -> 140 t/s** on the RX 9070 XT, and since activations stay F32
+it is also more exact than the unfused chain (KL vs. FP64 reference 3e-7 instead of 9e-4). Still slower than
+Qwen3-1.7B Q4_K_M (241 t/s); the large projections reach only ~100 GB/s so far (`docs/PROFILING.md`).
 
 ## How it works
 

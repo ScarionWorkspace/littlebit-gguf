@@ -30,6 +30,11 @@
 
 Vermutung, noch ungeprüft: Bei 1,33 GiB sollte die Generierung deutlich schneller sein können. Die vielen kleinen Kernels pro Schicht (7 Ops × 7 Projektionen × 36 Blöcke) dürften die Grenze sein. Vor jeder Optimierung profilieren und gegen dichtes Qwen3-8B auf derselben Karte messen.
 
+### Stand 2026-11-21 abends: fusionierte GPU-Kernels (Option 1 + 2)
+- Fork `littlebit`: `000c073d7` (Fusion der Kette zu 2 Kernels bei höchstens 8 Tokens), `f2b166c5a` (Bündelung von gate+up und v+k). Commits mit `Assisted-by:` statt `Co-authored-by:`, wie es `AGENTS.md` von llama.cpp verlangt. Die Regeln dort gelten nur für Upstream, Forks sind ausgenommen. Für einen späteren Upstream-PR gilt aber: vorher Issue öffnen, der Mensch muss den Code verstehen und PR-Text sowie Commit-Nachrichten selbst schreiben, keine automatisierten PRs.
+- Ergebnis: tg 82 → **140 t/s**, KL gegen exakt 3,1e-7 statt 8,8e-4. Details und Messwerte in `PROFILING.md`.
+- Nächster Hebel: Speicherzugriff der Kernels (große Projektionen erst bei ~100 GB/s).
+
 ### Entscheidungen 2026-11-21
 - **Richtung nach dem Baseline-Ergebnis** (LittleBit 8B verliert bei gleicher Größe gegen Qwen3-1.7B Q4_K_M): **A, danach C.** A = Infrastruktur fertigstellen (Profiling → Optionen Geschwindigkeit → Ollama → ehrliches README, Kontakt zu Parallelprojekten). C = danach große Modelle (27B/32B), sobald ein trainierter Checkpoint verfügbar ist. Kein Cloud-Training für das 8B (laut Paper-Verhältnis nicht konkurrenzfähig).
 - **Parallelprojekte** (`docs/RELATED.md`): Kontakt wegen eines gemeinsamen GGUF-Formats erst **nach** den Profiling-Ergebnissen (Option b). Text vorher dem Nutzer zur Freigabe vorlegen.
