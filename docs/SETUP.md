@@ -58,6 +58,8 @@ Ergebnis: `scripts/setup/install_rocm_wsl.sh` in einem separaten WSL-Fenster aus
   ```
   `HF_UI_VERSION=b12257` ist nötig: Durch unseren Commit wird die Build-Nummer `b12258`. Für die gibt es keine vorgefertigte Web-UI, und der Download der UI-Assets für `llama-server` schlägt fehl. An der UI ändern wir nichts, also passt das Paket des Basis-Tags.
 
+- **Ollama unter WSL: `LD_PRELOAD` nötig.** Ollama legt eigene Kopien der ROCm-Bibliotheken in `build/lib/ollama/rocm_v7_2/` (gleiche Version 7.2.4). Die WSL-Brücke `librocdxg` holt sich die HSA-Funktionen aber aus `/opt/rocm`. Damit laufen im Prozess zwei HSA-Laufzeiten, und der erste GPU-Zugriff hängt (`librocdxg.so: undefined symbol: hsa_signal_store_screlease`, bei Ollamas Speicherschätzung `fitting params to device memory`). Abhilfe: Ollama mit `LD_PRELOAD=/opt/rocm/lib/libhsa-runtime64.so.1 ./ollama serve` starten. Bei gleichem Soname lädt der Linker die gebündelte Kopie dann nicht mehr. Unser eigener llama.cpp-Build braucht das nicht. Das Problem betrifft vermutlich jedes Ollama mit ROCm unter WSL2, nicht nur LittleBit.
+
 Recherche-Notizen (vor der Installation):
 
 Stand der Quellen:

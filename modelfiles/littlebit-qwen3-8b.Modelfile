@@ -1,0 +1,13 @@
+# LittleBit Qwen3-8B (0.55 bpw, community checkpoint LittleBitLLM/littlebit-qwen3-8b-0.55bpw, CC BY-NC 4.0).
+# Needs an Ollama build with the LittleBit compat patch (llama/compat/002-littlebit.patch in the
+# Ollama fork, branch littlebit). Path relative to this file; create the GGUF with
+# convert_littlebit_to_gguf.py + llama-quantize Q4_K_M (see README).
+#
+# Note: this checkpoint was distilled on plain text (C4 + WikiText) for 0.5 epochs. Plain text
+# completion works, the chat format does not (it rarely emits an end token), so num_predict is
+# capped to keep `ollama run` from generating forever.
+FROM ../../gguf/littlebit-qwen3-8b-0.55bpw-lnone-Q4_K_M.gguf
+PARAMETER temperature 0.6
+PARAMETER top_p 0.95
+PARAMETER top_k 20
+PARAMETER num_predict 256

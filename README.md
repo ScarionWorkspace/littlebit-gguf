@@ -1,11 +1,11 @@
 # littlebit-gguf
 
 Native inference for [LittleBit](https://github.com/SamsungLabs/LittleBit)-compressed LLMs
-(< 1 bit per weight) in **llama.cpp** (and, next, **Ollama**): the binary factors stay packed in GGUF and
+(< 1 bit per weight) in **llama.cpp** and **Ollama**: the binary factors stay packed in GGUF and
 run on llama.cpp's existing `Q1_0` kernels. Nothing is expanded back to dense weights.
 
-> **Status: experimental research project.** LittleBit models run natively in llama.cpp on CPU and on
-> AMD GPUs (HIP/ROCm), verified against a reference implementation. Formats and interfaces may still
+> **Status: experimental research project.** LittleBit models run natively in llama.cpp and Ollama on CPU
+> and on AMD GPUs (HIP/ROCm), verified against a reference implementation. Formats and interfaces may still
 > change. Not suitable for production use.
 
 > **License notice.** Our own code in this repository is MIT-licensed (see `LICENSE`). LittleBit itself
@@ -22,7 +22,7 @@ run on llama.cpp's existing `Q1_0` kernels. Nothing is expanded back to dense we
 | 1 | Python reference + golden files | done |
 | 2 | GGUF format + converter (`docs/FORMAT.md`) | done |
 | 3 | llama.cpp: CPU + HIP (RX 9070 XT), correctness, PPL, baselines, profiling, fused GPU kernels (`docs/PROFILING.md`) | done; further kernel tuning possible |
-| 4 | Ollama | open |
+| 4 | Ollama: `ollama create` / `ollama run` via a compat patch, no Go changes | done |
 | 5 | Larger models, more architectures | open |
 
 Details and the decisions behind them: `docs/PROGRESS.md`. Related projects: `docs/RELATED.md`.
@@ -83,6 +83,7 @@ y = h ⊙ (U · (l ⊙ (V · (g ⊙ x))))  +  (same with U_R, V_R, h_R, l_R, g_R
 - llama.cpp fork, branch `littlebit`: https://github.com/ScarionWorkspace/llama.cpp/tree/littlebit
   (based on tag `b12257`, the version Ollama pins)
 - Ollama fork, branch `littlebit`: https://github.com/ScarionWorkspace/ollama/tree/littlebit
+  (adds `llama/compat/002-littlebit.patch`, generated from the llama.cpp fork by `scripts/make_ollama_patch.sh`)
 
 They are linked rather than included as submodules. Both are large and track upstream. Ollama
 consumes llama.cpp via a local source path (`OLLAMA_LLAMA_CPP_SOURCE`), so a submodule pin
@@ -130,7 +131,22 @@ cd ../littlebit-gguf
     -p "The capital of France is" -n 32 --temp 0
 ```
 
-### 3. Verify against the reference
+### 3. Ollama
+
+```bash
+cd ../ollama   # fork, branch littlebit (contains llama/compat/002-littlebit.patch)
+cmake -B build . -G Ninja -DOLLAMA_LLAMA_BACKENDS=rocm_v7_2 -DCMAKE_HIP_ARCHITECTURES=gfx1201
+cmake --build build --parallel 16
+# under WSL2 + librocdxg the bundled HSA runtime must be replaced by the system one (docs/SETUP.md):
+LD_PRELOAD=/opt/rocm/lib/libhsa-runtime64.so.1 ./ollama serve &
+./ollama create littlebit-qwen3-8b -f ../littlebit-gguf/modelfiles/littlebit-qwen3-8b.Modelfile
+./ollama run littlebit-qwen3-8b "The capital of France is"
+```
+
+Ollama reaches ~117 t/s generation with this model. The checkpoint is trained on plain text only:
+completion works, chat does not (see the Modelfile).
+
+### 4. Verify against the reference
 
 ```bash
 tools/build_tools.sh ../llama.cpp build-hip          # builds tools/bin/lb_dump_logits-build-hip
@@ -146,7 +162,7 @@ tools/build_tools.sh ../llama.cpp build-hip          # builds tools/bin/lb_dump_
 # baseline comparison (dense quants and smaller dense models): scripts/run_baselines.sh, run_dense_baselines.sh
 ```
 
-### 4. Python reference and golden files
+### 5. Python reference and golden files
 
 ```bash
 cd .. && .venv/bin/hf download Qwen/Qwen3-0.6B --local-dir models/Qwen3-0.6B && cd littlebit-gguf
