@@ -1,5 +1,17 @@
 # Fortschritt
 
+## Stand 2026-11-21 – Phase 4 (Ollama) abgeschlossen
+
+- **Integration über Ollamas eigenen Patch-Mechanismus:** Ollama holt llama.cpp `b12257` von Upstream und wendet `llama/compat/*.patch` an. Unsere Änderung liegt als `llama/compat/002-littlebit.patch` im Ollama-Fork (Branch `littlebit`, Commit `ccbd5630`), erzeugt aus dem llama.cpp-Fork mit `scripts/make_ollama_patch.sh` (nur `src/` und `ggml/src/`, Tests bleiben im Fork). 001 (Ollama) und 002 (LittleBit) lassen sich sauber übereinander anwenden. **Keine Änderung am Go-Code nötig.**
+- Build: `cmake -B build . -G Ninja -DOLLAMA_LLAMA_BACKENDS=rocm_v7_2 -DCMAKE_HIP_ARCHITECTURES=gfx1201 && cmake --build build`. Ollama erkennt die RX 9070 XT (`library=ROCm compute=gfx1201`).
+- **WSL-Stolperstein:** Ollamas gebündelte HSA-Laufzeit und `librocdxg` vertragen sich nicht, Abhilfe `LD_PRELOAD` (Details in `SETUP.md`).
+- `ollama create littlebit-qwen3-8b -f modelfiles/littlebit-qwen3-8b.Modelfile` → 1,4 GB. Über die API mit `raw` und greedy: „The capital of France is“ → „ Paris, and the city is known for its vibrant culture, architecture, and history“, **identisch** zum llama.cpp-Build. Bei einem Chat-Prompt ist Ollama bit-gleich zu unserem eigenen `llama-server` (dieselbe Ausgabe). `llama-completion` weicht dort ab, weil der Codepfad ein anderer ist. Bei fast gleichauf liegenden Top-Tokens reicht das für ein anderes Wort.
+- Geschwindigkeit über Ollama: **~117 t/s** Generierung (256 Tokens, nach Warmup). llama-bench: 140 t/s.
+- **Modell-Einschränkung, kein Integrationsfehler:** Der halb trainierte Checkpoint (nur Klartext C4 + WikiText) beherrscht das Chat-Format nicht. Er erzeugt Wiederholungen und fast nie ein End-Token. `ollama run` bricht dann mit „token repeat limit reached“ ab. Im Modelfile ist `num_predict 256` gesetzt.
+
+### Nächster Schritt
+Laut Plan **C**: große Modelle (27B/32B) und der Kontakt zu den Parallelprojekten (Text vorher zur Freigabe). Alternativ Kernel-Tuning (Speicherzugriff, große Projektionen erst bei ~100 GB/s).
+
 ## Stand 2026-11-20 – Phase 3 (llama.cpp): CPU und GPU (HIP) korrekt, PPL bestätigt
 
 ### GPU (RX 9070 XT, ROCm 7.2.4 unter WSL2)
