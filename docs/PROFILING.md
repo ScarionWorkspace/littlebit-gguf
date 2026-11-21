@@ -71,3 +71,25 @@ Wichtige Messwerkzeug-Erkenntnis: `test-backend-ops perf` taktet bei Mehrknoten-
 **Umgebungsgrenze:** Unter WSL/librocdxg kostet jeder Kernel in einem HIP-Graph mindestens ~4,5 µs, auch eine 128×128-Matmul. Die ~25 Nicht-LittleBit-Kernels pro Block (Norms, RoPE, Attention) kosten damit ~4 ms pro Token, genauso wie beim dichten Modell.
 
 **Nächster Hebel:** Die großen Projektionen erreichen erst ~100 GB/s von ~640 GB/s. Die 18-Byte-`Q1_0`-Blöcke werden byteweise gelesen. Breitere Ladezugriffe bzw. Kachelung (Stufe B) sollten die gate/up/down-Projektionen deutlich beschleunigen. Grob geschätzt gehen ~7 ms der 7,1 ms pro Token in die LittleBit-Projektionen.
+
+## Kernel-Tuning (2026-11-21, zeitlich begrenzt)
+
+Vorgehen: Erst die Stufen getrennt gemessen (temporärer Schalter, nur Stufe A bzw. nur B), dann gezielt verbessert, jeweils mit Mikrobenchmark und Korrektheitstests. Abbruchkriterium: weniger als ~10 % Gewinn end-to-end.
+
+| Projektion | vorher | A / B vorher | **v4: 32 Elemente pro Lane, B mit 2 Zeilen pro Warp** |
+|---|---:|---:|---:|
+| q/o | 31,6 µs | 17,1 / 17,6 | **24,7 µs** |
+| gate/up | 47,6 µs | 17,3 / **37,0** | **35,6 µs** |
+| down | 45,6 µs | **35,1** / 16,9 | **33,6 µs** |
+| k/v (gebündelt) | 10,7 µs | 9,3 / 6,3 | 12,5 µs |
+| **Summe pro Block** (q,o,k,v,gate,up,down) | **~225 µs** | | **~179 µs (−20 %)** |
+
+(Messungen in einer Sitzung, die Windows-seitige GPU-Last schwankt. Die Absolutwerte weichen deshalb von früheren Tabellen ab, die Relationen innerhalb der Tabelle gelten.)
+
+- Ursache vorher: Jede Lane verarbeitete 4 Elemente mit einem einzelnen Byte an Vorzeichen-Bits, es war wenig Speicherverkehr gleichzeitig unterwegs. In Stufe B las jede Warp für jede Ausgabezeile den kompletten latenten Vektor neu (~176 MB Cache-Verkehr bei gate/up für 3 MB Gewichte).
+- Parameter-Sweep (Zeilen pro Block in A × Zeilen pro Warp in B): A=4/B=2 am besten (179 µs). A=4/B=1 186, A=4/B=4 189, A=8/B=2 193.
+- **End-to-end: tg256 140 → ~146 t/s (+4 %).** Das ist weniger als der Mikrobenchmark nahelegt. Der Rest pro Token verteilt sich stärker auf Attention, Norms und lm_head (Q6_K, 487 MB). **Tuning nach dem Abbruchkriterium beendet.**
+- Genauigkeit unverändert: KL gegen exakt 3,05e-7 (2108 Positionen), Stufe 1 und 2 bestanden. 56/56 `LITTLEBIT_LINEAR`-Tests, darunter ein neuer Fall mit `n_out` nicht durch 2 teilbar (bleibt ungefusioniert).
+- Fork-Commit `9699b11f5`, Ollama-Patch neu erzeugt (Ollama-Fork `3b3f2ab2`).
+
+Weitere mögliche Hebel, nicht umgesetzt: (1) Stufe A und B in einem Kernel mit gridweiter Synchronisation (spart ~4,5 µs pro Projektion, also ~1,1 ms pro Token, braucht kooperative Launches). (2) Eigener Typ ohne Blockskalen mit 4-Byte-ausgerichteten Bit-Zeilen (bessere Ladezugriffe, −11 % Größe), aber ~25 Dateien. (3) Nicht-LittleBit-Teile, die genauso das dichte Modell betreffen.
