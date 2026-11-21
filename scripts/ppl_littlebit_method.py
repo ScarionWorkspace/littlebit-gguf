@@ -36,6 +36,8 @@ def main():
     ap.add_argument("--tool", default=str(ROOT / "tools/bin/lb_dump_logits-build-cpu"))
     ap.add_argument("--out", required=True)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--batch-windows", type=int, default=16,
+                    help="windows per tool call (model stays loaded, KV cache cleared per window)")
     args = ap.parse_args()
 
     import pyarrow.parquet as pq
@@ -53,22 +55,25 @@ def main():
     start = len(done)
     t0 = time.time()
     with tempfile.TemporaryDirectory() as td:
-        for i in range(len(done), n_chunks):
-            ids = enc[i * args.seqlen:(i + 1) * args.seqlen]
+        i = len(done)
+        while i < n_chunks:
+            nb = min(args.batch_windows, n_chunks - i)
+            ids = enc[i * args.seqlen:(i + nb) * args.seqlen]
             idf, nllf = Path(td) / "ids.i32", Path(td) / "out.nll"
             ids.astype("<i4").tofile(idf)
             subprocess.run([args.tool, args.gguf, str(idf), str(nllf), str(args.threads), args.flash_attn,
-                            str(args.ngl)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            nll = np.fromfile(nllf, dtype="<f8")
-            assert len(nll) == args.seqlen - 1
-            done.append(float(nll.sum()))
+                            str(args.ngl), "-", str(args.seqlen)],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            nll = np.fromfile(nllf, dtype="<f8").reshape(nb, args.seqlen - 1)
+            done.extend(float(x) for x in nll.sum(1))
+            i += nb
             ppl = math.exp(sum(done) / (len(done) * (args.seqlen - 1)))
             state = {"gguf": Path(args.gguf).name, "seqlen": args.seqlen, "n_tokens_total": int(len(enc)),
                      "n_chunks_total": len(enc) // args.seqlen, "n_chunks_done": len(done),
                      "flash_attn": args.flash_attn, "ngl": args.ngl, "ppl": ppl, "chunk_nll_sums": done}
             out.write_text(json.dumps(state, indent=1))
-            n_run = i + 1 - start
-            print(f"chunk {len(done)}/{n_chunks}  ppl {ppl:.4f}  ({(time.time() - t0) / n_run:.0f} s/chunk)", flush=True)
+            print(f"chunk {len(done)}/{n_chunks}  ppl {ppl:.4f}  ({(time.time() - t0) / (i - start):.1f} s/chunk)",
+                  flush=True)
     print(json.dumps({k: v for k, v in state.items() if k != "chunk_nll_sums"}, indent=1))
 
 

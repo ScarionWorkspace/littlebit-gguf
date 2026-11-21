@@ -1,12 +1,15 @@
 // Dump llama.cpp logits for a fixed token sequence (all positions), for comparison with
 // the Python reference. Build: tools/build_tools.sh. MIT license.
 //
-// usage: lb_dump_logits <model.gguf> <ids.i32> <out.f32> [n_threads] [flash_attn: auto|on|off] [n_gpu_layers] [names]
+// usage: lb_dump_logits <model.gguf> <ids.i32> <out.f32> [n_threads] [flash_attn: auto|on|off] [n_gpu_layers] [names] [window]
 //   ids.i32: raw little-endian int32 token ids
 //   out.f32: raw float32 logits, row-major [n_tokens, n_vocab]
 //            if the name ends in ".nll": instead float64 NLL of ids[i+1] given position i, [n_tokens-1]
 //   names:   optional comma-separated graph tensor names (e.g. "l_out-0,l_out-14") to dump
-//            as <out.f32>.<name> (F32, ggml order: ne0 fastest)
+//            as <out.f32>.<name> (F32, ggml order: ne0 fastest); "-" = none
+//   window:  optional; if > 0, ids are split into independent windows of this length (each starts at
+//            position 0 with an empty KV cache) and the outputs are concatenated. Saves reloading the
+//            model per window (perplexity runs).
 #include "ggml-backend.h"
 #include "llama.h"
 
@@ -51,7 +54,8 @@ int main(int argc, char ** argv) {
     const int ngl = argc > 6 ? atoi(argv[6]) : 0;
     dump_state st;
     st.prefix = argv[3];
-    if (argc > 7) {
+    const int window_arg = argc > 8 ? atoi(argv[8]) : 0;
+    if (argc > 7 && strcmp(argv[7], "-") != 0) {
         std::stringstream ss(argv[7]);
         for (std::string item; std::getline(ss, item, ',');) {
             st.names.insert(item);
@@ -64,7 +68,9 @@ int main(int argc, char ** argv) {
     fin.seekg(0);
     std::vector<llama_token> ids(nbytes / sizeof(int32_t));
     fin.read(reinterpret_cast<char *>(ids.data()), nbytes);
-    const int n = (int) ids.size();
+    const int n_all = (int) ids.size();
+    const int n = window_arg > 0 ? window_arg : n_all;
+    if (n_all % n != 0) { fprintf(stderr, "%d ids are not a multiple of window %d\n", n_all, n); return 1; }
 
     llama_backend_init();
     llama_model_params mp = llama_model_default_params();
@@ -87,38 +93,43 @@ int main(int argc, char ** argv) {
     llama_context * ctx = llama_init_from_model(model, cp);
     if (!ctx) { fprintf(stderr, "failed to create context\n"); return 1; }
 
-    llama_batch batch = llama_batch_init(n, 0, 1);
-    for (int i = 0; i < n; ++i) {
-        batch.token[i] = ids[i];
-        batch.pos[i] = i;
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;
-        batch.logits[i] = 1;
-    }
-    batch.n_tokens = n;
-    if (llama_decode(ctx, batch) != 0) { fprintf(stderr, "decode failed\n"); return 1; }
-
     const int n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
     std::ofstream fout(argv[3], std::ios::binary);
     const std::string out_name = argv[3];
     const bool nll_mode = out_name.size() > 4 && out_name.compare(out_name.size() - 4, 4, ".nll") == 0;
-    for (int i = 0; i < n; ++i) {
-        const float * lg = llama_get_logits_ith(ctx, i);
-        if (!nll_mode) {
-            fout.write(reinterpret_cast<const char *>(lg), sizeof(float) * n_vocab);
-            continue;
+
+    llama_batch batch = llama_batch_init(n, 0, 1);
+    for (int w0 = 0; w0 < n_all; w0 += n) {
+        const llama_token * wid = ids.data() + w0;
+        llama_memory_clear(llama_get_memory(ctx), true);
+        for (int i = 0; i < n; ++i) {
+            batch.token[i] = wid[i];
+            batch.pos[i] = i;
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = 1;
         }
-        if (i == n - 1) {
-            break;
+        batch.n_tokens = n;
+        if (llama_decode(ctx, batch) != 0) { fprintf(stderr, "decode failed\n"); return 1; }
+
+        for (int i = 0; i < n; ++i) {
+            const float * lg = llama_get_logits_ith(ctx, i);
+            if (!nll_mode) {
+                fout.write(reinterpret_cast<const char *>(lg), sizeof(float) * n_vocab);
+                continue;
+            }
+            if (i == n - 1) {
+                break;
+            }
+            double mx = lg[0];
+            for (int j = 1; j < n_vocab; ++j) mx = std::max(mx, (double) lg[j]);
+            double se = 0.0;
+            for (int j = 0; j < n_vocab; ++j) se += std::exp((double) lg[j] - mx);
+            const double nll = mx + std::log(se) - (double) lg[wid[i + 1]];
+            fout.write(reinterpret_cast<const char *>(&nll), sizeof(double));
         }
-        double mx = lg[0];
-        for (int j = 1; j < n_vocab; ++j) mx = std::max(mx, (double) lg[j]);
-        double se = 0.0;
-        for (int j = 0; j < n_vocab; ++j) se += std::exp((double) lg[j] - mx);
-        const double nll = mx + std::log(se) - (double) lg[ids[i + 1]];
-        fout.write(reinterpret_cast<const char *>(&nll), sizeof(double));
     }
-    fprintf(stderr, "wrote %d x %d logits\n", n, n_vocab);
+    fprintf(stderr, "processed %d windows of %d tokens, vocab %d\n", n_all / n, n, n_vocab);
 
     llama_batch_free(batch);
     llama_free(ctx);

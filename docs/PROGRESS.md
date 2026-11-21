@@ -30,8 +30,14 @@
 
 Vermutung, noch ungeprüft: Bei 1,33 GiB sollte die Generierung deutlich schneller sein können. Die vielen kleinen Kernels pro Schicht (7 Ops × 7 Projektionen × 36 Blöcke) dürften die Grenze sein. Vor jeder Optimierung profilieren und gegen dichtes Qwen3-8B auf derselben Karte messen.
 
+### Entscheidungen 2026-11-21
+- **Richtung nach dem Baseline-Ergebnis** (LittleBit 8B verliert bei gleicher Größe gegen Qwen3-1.7B Q4_K_M): **A, danach C.** A = Infrastruktur fertigstellen (Profiling → Optionen Geschwindigkeit → Ollama → ehrliches README, Kontakt zu Parallelprojekten). C = danach große Modelle (27B/32B), sobald ein trainierter Checkpoint verfügbar ist. Kein Cloud-Training für das 8B (laut Paper-Verhältnis nicht konkurrenzfähig).
+- **Parallelprojekte** (`docs/RELATED.md`): Kontakt wegen eines gemeinsamen GGUF-Formats erst **nach** den Profiling-Ergebnissen (Option b). Text vorher dem Nutzer zur Freigabe vorlegen.
+- **Geschwindigkeit:** Nach dem Profiling Optionen (fusionierte Op / eigener Typ ohne Blockskalen / beides) mit Messwerten und Empfehlung vorlegen. Das hat Vorrang vor Phase 4 (Ollama).
+- **Eigenes QAT:** vorerst **kein Geld ausgeben**. Reihenfolge: (1) nach Profiling und Vergleich auf der RX 9070 XT testen, ob Training mit PyTorch/ROCm unter WSL stabil läuft (Rezept `mgiachetti/little-bit` für Qwen3-0.6B, laut README 8 GB). Wenn ja, das 0.6B lokal trainieren (geschätzt 4–8 Tage). (2) Für das 8B im Kontakt mit den Parallelprojekten bzw. dem Autor von `LittleBitLLM/littlebit-qwen3-8b-0.55bpw` nach Checkpoints oder Weitertraining fragen. (3) Erst danach Credits (TPU Research Cloud, AWS/Azure Research) oder Cloud-Miete (8B, 1 Epoche, grob 200–500 USD, vorher 1 h Testlauf zur Durchsatzmessung).
+
 ### Nächste Schritte
-1. PR `phase3-llamacpp` → `main`.
+1. PR `phase3-llamacpp` → `main` (erledigt, PR #4).
 2. Vergleichsquants aus Qwen3-8B (Download lief bei Stand noch: `../models/Qwen3-8B`, bei Abbruch `hf download Qwen/Qwen3-8B --local-dir ../models/Qwen3-8B` erneut): Q4_K_M, Q2_K, IQ2_XXS, IQ1_S, TQ1_0. Größe, PPL (dieselbe Methode) und Geschwindigkeit auf der GPU messen, Vergleich bei gleicher Dateigröße.
 3. Profiling der Generierung auf der GPU, danach Optionen (Fusion der Kette / eigener Typ ohne Blockskalen) mit Empfehlung zur Entscheidung vorlegen.
 4. Phase 4: Ollama gegen den Fork bauen.
