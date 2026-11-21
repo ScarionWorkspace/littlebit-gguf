@@ -9,6 +9,9 @@
 - Geschwindigkeit über Ollama: **~117 t/s** Generierung (256 Tokens, nach Warmup). llama-bench: 140 t/s.
 - **Modell-Einschränkung, kein Integrationsfehler:** Der halb trainierte Checkpoint (nur Klartext C4 + WikiText) beherrscht das Chat-Format nicht. Er erzeugt Wiederholungen und fast nie ein End-Token. `ollama run` bricht dann mit „token repeat limit reached“ ab. Im Modelfile ist `num_predict 256` gesetzt.
 
+### Kernel-Tuning (2026-11-21)
+Zeitlich begrenzt, Details in `PROFILING.md`: LittleBit-Zeit pro Block −20 % (Mikrobenchmark), end-to-end aber nur 140 → 146 t/s (+4 %). Nach dem Abbruchkriterium (< 10 %) beendet. Genauigkeit unverändert, Ollama-Patch aktualisiert.
+
 ### Kontakt Parallelprojekte (2026-11-21)
 - Kommentar in [GeniusDevam/littlebit-gguf#1](https://github.com/GeniusDevam/littlebit-gguf/issues/1#issuecomment-7068232525) gepostet (vom Nutzer freigegeben): fusionierte Kernels, geprüfte Kompatibilität mit deren Format, unaufgefülltes `lb_v`, Baselines gleicher Größe, Ollama. Angebot: deren Metadatenschlüssel übernehmen, unaufgefülltes `lb_v` als erlaubte Variante. Antwort abwarten.
 - llama.cpp-Discussion #32671: nur der Nutzer selbst, keine KI-Texte.
