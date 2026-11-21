@@ -68,6 +68,10 @@ def main():
     ap.add_argument("--flash-attn", default="auto", choices=["auto", "on", "off"])
     ap.add_argument("--ngl", type=int, default=0, help="GPU layers for llama.cpp")
     ap.add_argument("--llama-cpp-dir", default=str(ROOT.parent / "llama.cpp"))
+    ap.add_argument("--ubatch", type=int, default=0,
+                    help="physical batch size for llama.cpp; <= 8 sends every token through the fused LittleBit path")
+    ap.add_argument("--sim", choices=["q1_0", "fused"], default="q1_0",
+                    help="numerics to simulate: unfused Q1_0 chain (Q8 activations) or fused kernels (F32)")
     ap.add_argument("--noise-floor", action="store_true",
                     help="also run the simulation in FP64 and report sim FP32 vs FP64 (Q8 noise floor)")
     ap.add_argument("--out", required=True)
@@ -92,12 +96,13 @@ def main():
     lr = torch.bfloat16 if l_round == "bf16" else None
     exact = Qwen3Ref.from_checkpoint(load_checkpoint(args.model, dtype=torch.float64, keep_dense_dtype=True,
                                                      l_round=lr))
+    sim_num = Numerics.llamacpp_lb_fused() if args.sim == "fused" else Numerics.llamacpp_q1_0()
     sim = Qwen3Ref.from_checkpoint(load_checkpoint(args.model, dtype=torch.float32, keep_dense_dtype=True,
-                                                   l_round=lr), numerics=Numerics.llamacpp_q1_0())
+                                                   l_round=lr), numerics=sim_num)
     # noise floor of the Q8 quantization: same simulation in FP64. FP rounding differences alone flip
     # single Q8 rounding decisions, so two correct implementations differ by about this much.
     sim64 = Qwen3Ref.from_checkpoint(load_checkpoint(args.model, dtype=torch.float64, keep_dense_dtype=True,
-                                                     l_round=lr), numerics=Numerics.llamacpp_q1_0()) \
+                                                     l_round=lr), numerics=sim_num) \
         if args.noise_floor else None
 
     a_exact, a_sim, a_simref, a_floor = Agg(), Agg(), Agg(), Agg()
@@ -108,7 +113,8 @@ def main():
             idf, outf = Path(td) / "ids.i32", Path(td) / "logits.f32"
             ids.to(torch.int32).numpy().astype("<i4").tofile(idf)
             subprocess.run([args.tool, args.gguf, str(idf), str(outf), str(args.threads), args.flash_attn,
-                            str(args.ngl)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            str(args.ngl), "-", "0", str(args.ubatch)],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             lc = torch.from_numpy(np.fromfile(outf, dtype="<f4").reshape(len(ids), -1).copy())
             ref = exact.forward(ids)
             sref = sim.forward(ids)
@@ -127,6 +133,7 @@ def main():
         a_simref.result(ref_ppl)
     res = {
         "gguf": Path(args.gguf).name, "l_round": l_round, "flash_attn": args.flash_attn, "ngl": args.ngl,
+        "ubatch": args.ubatch, "sim": args.sim,
         "n_inputs": len(inputs), "n_positions": a_exact.n_pos, "ref_ppl": ref_ppl,
         "llamacpp_vs_sim": vs_sim, "llamacpp_vs_exact": vs_exact, "sim_vs_exact": sim_vs_exact,
         "noise_floor_sim32_vs_sim64": a_floor.result(ref_ppl) if sim64 is not None else None,

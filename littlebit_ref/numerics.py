@@ -35,6 +35,11 @@ class Numerics:
     def llamacpp_q1_0(cls) -> "Numerics":
         return cls(act_q8_0=True, scales_fp16=True, kv_f16=True)
 
+    @classmethod
+    def llamacpp_lb_fused(cls) -> "Numerics":
+        """Fused LittleBit kernels (ggml-cuda/littlebit.cu): activations stay F32, no Q8."""
+        return cls(act_q8_0=False, scales_fp16=True, kv_f16=True)
+
     @property
     def is_exact(self) -> bool:
         return not (self.act_q8_0 or self.scales_fp16 or self.kv_f16)
