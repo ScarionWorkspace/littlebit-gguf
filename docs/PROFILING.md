@@ -47,3 +47,27 @@ Vorgehen bei Option 1:
 3. Messung: `test-backend-ops perf`, `llama-bench`, die Prüfungen Stufe 1/2 und Block 0 auf der GPU.
 
 Für die Prompt-Verarbeitung sind die Matmuls selbst schon schneller als dicht (n = 512: 1,1 ms gegen 3,1 ms pro Block und Pfad). Die gemessenen pp512-Werte schwanken aber stark (1836–3093 t/s). Das wird vor jeder Aussage mit mehr Wiederholungen nachgemessen.
+
+## Umsetzung und Ergebnis (2026-11-21)
+
+Umgesetzt im llama.cpp-Fork, Branch `littlebit`, Commits `000c073d7` (Option 1) und `f2b166c5a` (Option 2, leichte Variante):
+- `ggml/src/ggml-cuda/littlebit.cu`: Der Graph-Optimierer des CUDA/HIP-Backends erkennt die 9 Knoten, die `build_lb_mm` erzeugt, und rechnet sie bei höchstens 8 Tokens als **2 Kernels**. Stufe A berechnet beide latenten Vektoren mit `g` im Skalarprodukt, die Reduktion ist auf 8 Warps pro Block verteilt. Stufe B berechnet `U·t + U_R·t_R`, ein Warp pro Ausgabezeile. Aktivierungen bleiben in F32. Kein neuer ggml-Typ, keine neue Op, keine Formatänderung.
+- Option 2: Direkt aufeinanderfolgende Projektionen mit gleichem Eingang und gleicher Shape (ffn_gate+ffn_up, attn_v+attn_k) teilen sich die 2 Kernels. attn_q bleibt einzeln, weil zwischen q und v die Norm- und RoPE-Knoten liegen. Diese vorzuziehen hieße, den Graphen umzuordnen, was die llama.cpp-Review-Regeln ausschließen.
+- Tests: `test-backend-ops -o LITTLEBIT_LINEAR`, 40 Fälle (mit/ohne Residual, 1–9 Tokens, 1–2 gebündelte Projektionen, alle 8B-Shapes). GPU gegen CPU, alle grün. Dazu 101/101 `Q1_0`-Matmul-Fälle.
+
+Wichtige Messwerkzeug-Erkenntnis: `test-backend-ops perf` taktet bei Mehrknoten-Graphen nur den letzten Knoten und ist für Fusionen unbrauchbar. Neu ist deshalb `tools/lb_bench_linear.cpp` (36 Projektionen in einem ggml-Graphen, mit HIP-Graphs wie im Betrieb).
+
+| Projektion (n = 1) | dichtes Q4_K | LittleBit ungefusioniert | v1 (1 Warp/Zeile) | **v3 (aufgeteilte Reduktion)** | + gebündelt |
+|---|---:|---:|---:|---:|---:|
+| q/o 4096→4096 | 27,4 µs | 41,9 µs | 39,3 µs | **24,2 µs** | – |
+| gate/up 4096→12288 | 55,9 µs | 53,6 µs | 56,6 µs | **41,5 µs** | ~40 µs |
+| down 12288→4096 | 49,5 µs | 52,6 µs | 80,7 µs | **42,8 µs** | – |
+| k/v 4096→1024 | 14,0 µs | 37,9 µs | 36,1 µs | **14,3 µs** | **10,6 µs** |
+
+**End-to-end** (llama-bench tg256, 8 Wiederholungen, abwechselnd gemessen): **140 t/s fusioniert gegen 82 t/s ungefusioniert (+70 %).** Die Bündelung bringt laut Mikrobenchmark ~5 %, das liegt innerhalb der Streuung der End-to-End-Messung (Windows-seitige GPU-Last schwankt).
+
+**Genauigkeit:** Fusionierter Pfad mit 2108 Positionen (`n_ubatch=8`, alles über die fusionierten Kernels): KL gegen die exakte FP64-Referenz **3,1e-7** (ungefusioniert 8,8e-4), ΔPPL −0,001 %. Stufe 1 (gegen `Numerics.llamacpp_lb_fused`) und Stufe 2 bestanden.
+
+**Umgebungsgrenze:** Unter WSL/librocdxg kostet jeder Kernel in einem HIP-Graph mindestens ~4,5 µs, auch eine 128×128-Matmul. Die ~25 Nicht-LittleBit-Kernels pro Block (Norms, RoPE, Attention) kosten damit ~4 ms pro Token, genauso wie beim dichten Modell.
+
+**Nächster Hebel:** Die großen Projektionen erreichen erst ~100 GB/s von ~640 GB/s. Die 18-Byte-`Q1_0`-Blöcke werden byteweise gelesen. Breitere Ladezugriffe bzw. Kachelung (Stufe B) sollten die gate/up/down-Projektionen deutlich beschleunigen. Grob geschätzt gehen ~7 ms der 7,1 ms pro Token in die LittleBit-Projektionen.
