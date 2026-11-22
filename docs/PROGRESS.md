@@ -18,6 +18,10 @@ Zeitlich begrenzt, Details in `PROFILING.md`: LittleBit-Zeit pro Block −20 % (
 - 2026-11-22: luben93 hat geantwortet. Baseline gleicher Größe bestätigt (A1000, PPL 22,41 vs. 15,02 für Qwen3-1.7B Q4_K_M, Verhältnis 1,49 bei uns 1,46). Einverstanden mit unaufgefülltem `lb_v` und GeniusDevams Schlüsselnamen. Korrektur: `893866f` ist GeniusDevams Konverter. Die Dateien von GeniusDevam und luben93 sind byte-gleich bis auf Füllbits.
 - [Antwort gepostet](https://github.com/GeniusDevam/littlebit-gguf/issues/1#issuecomment-7084551306) (vom Nutzer freigegeben): CUDA-Angebot angenommen (fusionierter vs. ungefusionierter Pfad mit `GGML_CUDA_DISABLE_FUSION=1`, tg-Speedup, PPL, Ranks ≠ Vielfaches von 32). Schlüsselnamen erst nach GeniusDevams Zustimmung ändern.
 
+### LittleBit-Upstream (2026-11-22)
+- PR #25 (Single-GPU, fp16-Overflow) und #27 (`split_dim_used`, schnellerer `binary_unpacker`, Vorzeichen einmal beim Laden) übernommen, LittleBit `0ceadcf`. Formel, Checkpoint-Format und BF16-Rundung von `l` unverändert.
+- `compare_original.py --mode littlebit --emulate-bf16-l` (0.6B-Init, FP32) erneut: **bit-gleich** zum gespeicherten Ergebnis (0 von 384 Werten verschieden), bestanden.
+
 ### Nächster Schritt
 Laut Plan **C**: große Modelle (27B/32B) und der Kontakt zu den Parallelprojekten (Text vorher zur Freigabe). Alternativ Kernel-Tuning (Speicherzugriff, große Projektionen erst bei ~100 GB/s).
 
