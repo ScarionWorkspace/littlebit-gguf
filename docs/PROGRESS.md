@@ -23,14 +23,14 @@ Zeitlich begrenzt, Details in `PROFILING.md`: LittleBit-Zeit pro Block −20 % (
 - Bei uns umgesetzt: Konverter ScarionWorkspace/littlebit-gguf#12 (schreibt die vier Schlüssel, Version 2, Version 1 nur wenn alle Ranks Vielfache von 128 sind; `eff_bits` muss > 0 sein, sonst Abbruch mit Hinweis auf `--eff-bits`), Loader ScarionWorkspace/llama.cpp#2 (liest `format_version` oder das alte `littlebit.version`, lehnt > 2 ab), Ollama-Patch ScarionWorkspace/ollama#1. `l_round` und `quant_func` bleiben als eigene Zusatzschlüssel; ob GeniusDevam damit einverstanden ist, ist offen.
 - luben93 hat unseren Fork (`9699b11f5`) auf einer RTX A1000 (Ampere, Laptop) gemessen: baut, 56/56 `LITTLEBIT_LINEAR`, PPL korrekt, fusionierter Pfad bei 8-Token-Batches bis auf 0,0004 an der FP32-Referenz (ungefusioniert ~0,02). **Aber der fusionierte Pfad ist dort etwa halb so schnell** (tg64 24,9 vs. 48,2 t/s). Von unseren drei Kernel-Versionen ist dort die erste (`000c073d7`) die beste; Bündeln und 32 Elemente pro Lane haben auf NVIDIA geschadet. Die Kosten wachsen fast linear mit der Tokenzahl.
 - [Antwort gepostet](https://github.com/GeniusDevam/littlebit-gguf/issues/1#issuecomment-7099110412) (vom Nutzer freigegeben): Format zugestimmt, PRs verlinkt, angekündigt: fusionierter Pfad vorerst nur auf AMD.
-- Umgesetzt in ScarionWorkspace/llama.cpp (Branch `littlebit-fused-amd-only`): fusionierter Pfad standardmäßig nur auf AMD, `GGML_CUDA_LB_FUSION=1/0` erzwingt an/aus. RX 9070 XT (8B F16, tg64): Standard 128, erzwungen an 133, aus 77 t/s; 56/56 Tests in allen drei Modi. Auf NVIDIA nicht selbst geprüft (keine Karte im PC), luben93 misst nach.
+- Umgesetzt in ScarionWorkspace/llama.cpp#3: fusionierter Pfad standardmäßig nur auf AMD, `GGML_CUDA_LB_FUSION=1/0` erzwingt an/aus. RX 9070 XT (8B F16, tg64): Standard 128, erzwungen an 133, aus 77 t/s; 56/56 Tests in allen drei Modi. Auf NVIDIA nicht selbst geprüft (keine Karte im PC), luben93 misst nach.
 
 ### LittleBit-Upstream (2026-11-22)
 - PR #25 (Single-GPU, fp16-Overflow) und #27 (`split_dim_used`, schnellerer `binary_unpacker`, Vorzeichen einmal beim Laden) übernommen, LittleBit `0ceadcf`. Formel, Checkpoint-Format und BF16-Rundung von `l` unverändert.
 - `compare_original.py --mode littlebit --emulate-bf16-l` (0.6B-Init, FP32) erneut: **bit-gleich** zum gespeicherten Ergebnis (0 von 384 Werten verschieden), bestanden.
 
 ### Nächster Schritt
-- PRs mergen: llama.cpp#2 und der AMD-only-PR, danach den Ollama-Patch mit `scripts/make_ollama_patch.sh` aus `littlebit` neu erzeugen (ollama#1 enthält bisher nur #2).
+- PRs mergen: llama.cpp#2 und #3, danach den Ollama-Patch mit `scripts/make_ollama_patch.sh` aus `littlebit` neu erzeugen (ollama#1 enthält bisher nur #2).
 - luben93 um eine Nachmessung bitten (Standard muss jetzt dem ungefusionierten Pfad entsprechen).
 - Antwort von GeniusDevam zu den Zusatzschlüsseln abwarten; deren Spezifikation in `docs/FORMAT.md` verlinken, sobald sie da ist.
 - Danach laut Plan **C**: große Modelle (27B/32B). Alternativ NVIDIA-Kernel-Tuning, falls jemand mit NVIDIA-Karte mitmisst.
