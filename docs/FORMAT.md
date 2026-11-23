@@ -1,4 +1,4 @@
-# GGUF-Format für LittleBit (Version 1)
+# GGUF-Format für LittleBit (`littlebit.format_version` 1 und 2)
 
 Erzeugt von `convert_littlebit_to_gguf.py`. Gelesen von `littlebit_ref/gguf_loader.py`, später von llama.cpp (Phase 3).
 Es gibt **keinen neuen ggml-Typ**: Die Vorzeichenmatrizen sind `GGML_TYPE_Q1_0` (llama.cpp ab `b12257`).
@@ -45,13 +45,18 @@ y = ggml_mul_mat(lb_u, t)             // [out]: enthält bereits h
 
 ## Metadaten
 
+Die ersten vier Schlüssel sind das gemeinsame Format mit [GeniusDevam/littlebit-gguf](https://github.com/GeniusDevam/littlebit-gguf) und [luben93/littlebit-llamacpp](https://github.com/luben93/littlebit-llamacpp) (abgestimmt in GeniusDevam/littlebit-gguf#1). Die letzten beiden gibt es nur bei uns, andere Loader ignorieren sie.
+
 | Schlüssel | Typ | Bedeutung |
 |---|---|---|
-| `littlebit.version` | u32 | Formatversion, aktuell 1 |
+| `littlebit.format_version` | u32 | `1`: `lb_v` auf `r_pad` aufgefüllt. `2`: `lb_v` mit echtem Rank `r` (Loader füllen den Latent-Vektor auf). Dieser Konverter füllt `lb_v` nie auf und schreibt `1` nur, wenn alle Ranks schon Vielfache von 128 sind (dann sind beide Layouts identisch), sonst `2`. Ältere Loader, die nur `1` kennen, lehnen `2` mit einer klaren Meldung ab |
 | `littlebit.residual` | bool | Residualpfad vorhanden (`*_r`-Tensoren) |
-| `littlebit.eff_bit` | f32 | Ziel-bpw aus `littlebit_config.json` (nur zur Information) |
-| `littlebit.l_round` | string | `none`: `l = v1·u2` exakt, nur FP16-Blockskala. `bf16`: `l` wurde vor dem Schreiben auf BF16 gerundet, wie bei LittleBits eigener Inferenz |
-| `littlebit.quant_func` | string | Trainings-Vorzeichenfunktion (nur zur Information) |
+| `littlebit.eff_bits` | f32 | Ziel-bpw aus `littlebit_config.json` (`eff_bit`) oder `--eff-bits`; muss endlich und > 0 sein (nur zur Information) |
+| `littlebit.use_itq` | bool | Mit LittleBit-2-ITQ initialisiert (`use_itq` aus `littlebit_config.json`, sonst `false`; nur zur Information) |
+| `littlebit.l_round` | string | Nur bei uns. `none`: `l = v1·u2` exakt, nur FP16-Blockskala. `bf16`: `l` wurde vor dem Schreiben auf BF16 gerundet, wie bei LittleBits eigener Inferenz |
+| `littlebit.quant_func` | string | Nur bei uns. Trainings-Vorzeichenfunktion (nur zur Information) |
+
+Ältere Dateien dieses Projekts (vor dem gemeinsamen Format) haben stattdessen `littlebit.version = 1` und `littlebit.eff_bit` und kein `use_itq`. Ihr Tensor-Layout entspricht `format_version` 2. Unser llama.cpp-Loader liest beide.
 
 ## Genauigkeit
 

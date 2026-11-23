@@ -31,7 +31,11 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 from littlebit_ref.checkpoint import LBPath, load_checkpoint  # noqa: E402
 
-FORMAT_VERSION = 1
+# Shared format (GeniusDevam/littlebit-gguf#1): version 1 = lb_v padded to r_pad,
+# version 2 = lb_v at the true rank r. This converter never pads lb_v, so a file is version 1
+# only when every rank is already a multiple of 128 (then both layouts are the same bytes).
+FORMAT_VERSION_PADDED_V = 1
+FORMAT_VERSION_UNPADDED_V = 2
 QK1_0 = 128
 LB_RAW = re.compile(r"\.(U|V|U_R|V_R)_(packed|shape)$|\.(u1|u2|v1|v2)(_R)?$|\._(split_dim_final|eff_bit_actual|eff_bit_target)$")
 logger = logging.getLogger("littlebit")
@@ -68,6 +72,8 @@ def main():
                     help="type for embeddings/lm_head (norms and g are always F32)")
     ap.add_argument("--l-round", choices=["none", "bf16"], default="none",
                     help="round l = v1*u2 to BF16 before storing (reproduces LittleBit's own inference)")
+    ap.add_argument("--eff-bits", type=float, default=None,
+                    help="target bpw for littlebit.eff_bits (default: eff_bit from littlebit_config.json)")
     ap.add_argument("--llama-cpp-dir", type=Path,
                     default=Path(os.environ.get("LLAMA_CPP_DIR", ROOT.parent / "llama.cpp")))
     ap.add_argument("--verbose", action="store_true")
@@ -88,6 +94,16 @@ def main():
     residual = all(lin.residual is not None for lin in ck.linears.values())
     if not residual and any(lin.residual is not None for lin in ck.linears.values()):
         raise SystemExit("mixed residual / non-residual layers are not supported")
+    eff_bits = args.eff_bits if args.eff_bits is not None else ck.lb_config.get("eff_bit")
+    if not isinstance(eff_bits, (int, float)) or isinstance(eff_bits, bool) \
+            or not np.isfinite(eff_bits) or eff_bits <= 0:
+        raise SystemExit(f"littlebit_config.json has no usable eff_bit ({eff_bits!r}); pass --eff-bits")
+    use_itq = ck.lb_config.get("use_itq", False)
+    if not isinstance(use_itq, bool):
+        raise SystemExit(f"littlebit_config.json: use_itq must be true or false, got {use_itq!r}")
+    ranks = [p.rank for lin in ck.linears.values() for p in (lin.main, lin.residual) if p is not None]
+    format_version = (FORMAT_VERSION_PADDED_V if all(r % QK1_0 == 0 for r in ranks)
+                      else FORMAT_VERSION_UNPADDED_V)
 
     base_cls = get_model_class("Qwen3ForCausalLM")
     stats = {"h_fp16_zero": 0, "h_fp16_subnormal": 0, "n_h": 0}
@@ -103,9 +119,11 @@ def main():
         def set_gguf_parameters(self):
             super().set_gguf_parameters()
             w = self.gguf_writer
-            w.add_uint32("littlebit.version", FORMAT_VERSION)
+            # the four shared keys, then two of our own (informational, other loaders ignore them)
+            w.add_uint32("littlebit.format_version", format_version)
             w.add_bool("littlebit.residual", residual)
-            w.add_float32("littlebit.eff_bit", float(ck.lb_config.get("eff_bit", -1.0)))
+            w.add_float32("littlebit.eff_bits", float(eff_bits))
+            w.add_bool("littlebit.use_itq", use_itq)
             w.add_string("littlebit.l_round", args.l_round)
             w.add_string("littlebit.quant_func", str(ck.lb_config.get("quant_func", "")))
 
@@ -144,6 +162,8 @@ def main():
     model.write()
     logger.info("h -> FP16: %d of %d values flush to 0, %d become subnormal",
                 stats["h_fp16_zero"], stats["n_h"], stats["h_fp16_subnormal"])
+    logger.info("littlebit.format_version = %d (%s lb_v)", format_version,
+                "padded" if format_version == FORMAT_VERSION_PADDED_V else "unpadded")
     logger.info("wrote %s (%.1f MiB)", args.outfile, args.outfile.stat().st_size / 2**20)
 
 
