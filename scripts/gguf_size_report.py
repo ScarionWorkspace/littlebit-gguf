@@ -65,7 +65,9 @@ def main():
         "dense_params": dense_params, "linear_params": linear_params,
         "bpw_whole_file": file_bytes * 8 / dense_params,
         "bpw_linear_layers": lin_bytes * 8 / linear_params,
-        "littlebit_eff_bit_target": float(kv("littlebit.eff_bit")) if "littlebit.eff_bit" in r.fields else None,
+        # littlebit.eff_bits since the shared format; littlebit.eff_bit in older files of ours
+        "littlebit_eff_bit_target": next((float(kv(k)) for k in ("littlebit.eff_bits", "littlebit.eff_bit")
+                                          if k in r.fields), None),
         "parts_MiB": {k: v[0] / 2**20 for k, v in sorted(groups.items())},
         "parts_share": {k: v[0] / file_bytes for k, v in sorted(groups.items())},
         "metadata_and_header_MiB": (file_bytes - sum(v[0] for v in groups.values())) / 2**20,
