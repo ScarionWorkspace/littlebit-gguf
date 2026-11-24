@@ -22,8 +22,9 @@ NORMS = {
 
 
 def _q1_0_signs_and_scale(raw: np.ndarray, shape: list[int]) -> tuple[torch.Tensor, torch.Tensor]:
-    """Q1_0 raw blocks (18 bytes: FP16 d + 128 bits, LSB first, 1 = +d) -> (signs int8, d >= 0)
-    without expanding to float. All blocks of a row must share d (LittleBit factor layout)."""
+    """Q1_0 raw blocks (18 bytes: FP16 d + 128 bits, LSB first, 1 = +d) -> (signs int8, d)
+    without expanding to float. All blocks of a row must share d (LittleBit factor layout).
+    d keeps its sign (shared spec); older files of ours have d >= 0 with the sign in the bits."""
     rows, cols = shape
     blocks = raw.reshape(rows, cols // 128, 18)
     d = blocks[..., :2].copy().view(np.float16)[..., 0].astype(np.float64)   # [rows, nblk]
@@ -31,8 +32,7 @@ def _q1_0_signs_and_scale(raw: np.ndarray, shape: list[int]) -> tuple[torch.Tens
         raise ValueError("Q1_0 row with differing block scales: not a LittleBit factor")
     bits = np.unpackbits(blocks[..., 2:], axis=-1, bitorder="little").reshape(rows, cols)
     signs = (bits.astype(np.int8) * 2 - 1)
-    signs[d[:, 0] < 0] *= -1   # d is written as mean|x| >= 0, but be safe
-    return torch.from_numpy(signs), torch.from_numpy(np.abs(d[:, 0]))
+    return torch.from_numpy(signs), torch.from_numpy(d[:, 0].copy())
 
 
 def load_gguf(path, dtype=torch.float64) -> Checkpoint:

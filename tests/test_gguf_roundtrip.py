@@ -27,7 +27,7 @@ def pair(request):
 def test_factors_bit_exact(pair):
     _, ck, gk = pair
     assert ck.linears.keys() == gk.linears.keys()
-    f16 = lambda t: t.abs().to(torch.float16).double()  # noqa: E731
+    f16 = lambda t: t.to(torch.float16).double()  # noqa: E731
     for name, lin in ck.linears.items():
         glin = gk.linears[name]
         for p, q in ((lin.main, glin.main), (lin.residual, glin.residual)):
@@ -35,12 +35,10 @@ def test_factors_bit_exact(pair):
                 assert q is None
                 continue
             r = p.rank
-            # sign of h / l is folded into the bits
-            sh = torch.where(p.h < 0, -1, 1).to(torch.int8)
-            sl = torch.where(p.l < 0, -1, 1).to(torch.int8)
-            nz_h = f16(p.h) != 0
-            assert torch.equal((q.U[:, :r] * sh[:, None])[nz_h], p.U[nz_h]), name
-            assert torch.equal((q.V[:r] * sl[:, None]), p.V), name
+            # shared spec: the bits are the checkpoint's signs, the scales keep their sign
+            assert torch.equal(q.U[:, :r], p.U.to(q.U.dtype)), name
+            assert torch.all(q.U[:, r:] == -1), name            # padding bits cleared
+            assert torch.equal(q.V[:r], p.V.to(q.V.dtype)), name
             assert torch.equal(q.h, f16(p.h)), name
             assert torch.equal(q.l[:r], f16(p.l)), name
             assert torch.all(q.l[r:] == 0), name               # padding rows contribute nothing
