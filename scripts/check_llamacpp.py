@@ -4,7 +4,7 @@
 Level 1: llama.cpp vs. simulation of its numerics (Numerics.llamacpp_q1_0, FP32)
 Level 2: llama.cpp vs. exact reference (FP64)
 Tolerances: littlebit_ref.metrics (derived in docs/PROGRESS.md). Pass/fail on logits/KL/PPL only.
-The l variant (exact / BF16-rounded) is taken from the GGUF metadata `littlebit.l_round`.
+The l variant (exact / BF16-rounded) is taken from the GGUF metadata `littlebit.x.l_round` (older files: `littlebit.l_round`).
 """
 import argparse
 import glob
@@ -80,7 +80,8 @@ def main():
     sys.path.insert(0, str(Path(args.llama_cpp_dir) / "gguf-py"))
     import gguf
     r = gguf.GGUFReader(args.gguf)
-    l_round = r.fields["littlebit.l_round"].contents() if "littlebit.l_round" in r.fields else "none"
+    key = next((k for k in ("littlebit.x.l_round", "littlebit.l_round") if k in r.fields), None)
+    l_round = r.fields[key].contents() if key else "none"
     del r
 
     import pyarrow.parquet as pq

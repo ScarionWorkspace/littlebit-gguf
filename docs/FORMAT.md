@@ -1,6 +1,7 @@
 # GGUF-Format für LittleBit (`littlebit.format_version` 1 und 2)
 
-Erzeugt von `convert_littlebit_to_gguf.py`. Gelesen von `littlebit_ref/gguf_loader.py`, später von llama.cpp (Phase 3).
+Erzeugt von `convert_littlebit_to_gguf.py`. Gelesen von `littlebit_ref/gguf_loader.py` und unserem llama.cpp-Branch `littlebit`.
+Die gemeinsame Spezifikation der drei Implementierungen ist [GeniusDevam/littlebit-gguf docs/FORMAT.md](https://github.com/GeniusDevam/littlebit-gguf/blob/main/docs/FORMAT.md#gguf-layout). Diese Seite beschreibt, wie unser Konverter sie umsetzt.
 Es gibt **keinen neuen ggml-Typ**: Die Vorzeichenmatrizen sind `GGML_TYPE_Q1_0` (llama.cpp ab `b12257`).
 
 ## Mathematik
@@ -20,13 +21,14 @@ Für jede Projektion `P` ∈ {`attn_q`, `attn_k`, `attn_v`, `attn_output`, `ffn_
 
 | Name | Typ | ggml `ne` | Inhalt |
 |---|---|---|---|
-| `blk.N.P.lb_v{S}` | Q1_0 | `[in, r]` | Zeile `i`: Vorzeichen `sign(l[i])·V[i,:]`, Blockskala `d = fp16(|l[i]|)` in allen Blöcken der Zeile |
-| `blk.N.P.lb_u{S}` | Q1_0 | `[r_pad, out]` | Zeile `o`: Vorzeichen `sign(h[o])·U[o,:]`, Blockskala `d = fp16(|h[o]|)`. Spalten `r … r_pad−1` sind Füllwerte (Bit 1) |
+| `blk.N.P.lb_v{S}` | Q1_0 | `[in, r]` | Zeile `i`: Vorzeichen `V[i,:]`, Blockskala `d = fp16(l[i])` (mit Vorzeichen) in allen Blöcken der Zeile |
+| `blk.N.P.lb_u{S}` | Q1_0 | `[r_pad, out]` | Zeile `o`: Vorzeichen `U[o,:]`, Blockskala `d = fp16(h[o])` (mit Vorzeichen). Spalten `r … r_pad−1` sind Füllwerte mit gelöschtem Bit (0) |
 | `blk.N.P.lb_g{S}` | F32 | `[in]` | `g`, verlustfrei (BF16 → F32) |
 
 - `r_pad` = `r` auf ein Vielfaches von 128 aufgerundet (`QK1_0`). Für `Q1_0` muss die Eingangsdimension (`ne0`) durch 128 teilbar sein. Bei `V` ist das die Hidden-Größe, `V` behält also den echten Rank `r`. Bei `U` ist es der Rank, `U` wird deshalb aufgefüllt.
 - Der Rank ergibt sich aus den Shapes (`ne[1]` von `lb_v`). Er darf je Projektion und Block verschieden sein.
-- Bit-Konvention von `Q1_0`: LSB zuerst, Bit 1 = `+d`, Bit 0 = `−d`. Bei LittleBit ist es umgekehrt (Bit 1 = −1). Der Konverter liest die LittleBit-Bits und schreibt sie über den gguf-py-Quantisierer neu.
+- Bit-Konvention von `Q1_0`: LSB zuerst, Bit 1 = `+d`, Bit 0 = `−d`. Bei LittleBit ist es umgekehrt (Bit 1 = −1). Der Konverter schreibt die `Q1_0`-Blöcke direkt (nicht über den gguf-py-Quantisierer, der immer `d ≥ 0` erzeugt). Eine Skala, die in FP16 auf null fällt, bleibt eine Null mit Vorzeichen, wie bei `numpy.astype(float16)`. Damit sind unsere `lb_*`-Tensoren byte-gleich mit denen der beiden anderen Konverter.
+- Dateien unseres Konverters vor 2026-11-24 haben `d = fp16(|h|)` bzw. `fp16(|l|)` und das Vorzeichen in den Bits, die Füllspalten von `U` haben Bit 1. Sie ergeben dieselben Werte und bleiben gültig.
 - Ein dichtes `blk.N.P.weight` gibt es für komprimierte Projektionen nicht.
 
 ## Forward-Pass im ggml-Graph (Phase 3)
@@ -45,7 +47,7 @@ y = ggml_mul_mat(lb_u, t)             // [out]: enthält bereits h
 
 ## Metadaten
 
-Die ersten vier Schlüssel sind das gemeinsame Format mit [GeniusDevam/littlebit-gguf](https://github.com/GeniusDevam/littlebit-gguf) und [luben93/littlebit-llamacpp](https://github.com/luben93/littlebit-llamacpp) (abgestimmt in GeniusDevam/littlebit-gguf#1). Die letzten beiden gibt es nur bei uns, andere Loader ignorieren sie.
+Die ersten vier Schlüssel sind das gemeinsame Format mit [GeniusDevam/littlebit-gguf](https://github.com/GeniusDevam/littlebit-gguf) und [luben93/littlebit-llamacpp](https://github.com/luben93/littlebit-llamacpp) (abgestimmt in GeniusDevam/littlebit-gguf#1). Die letzten beiden gibt es nur bei uns. Sie liegen unter `littlebit.x.*`, das alle Loader laut Spezifikation ignorieren.
 
 | Schlüssel | Typ | Bedeutung |
 |---|---|---|
@@ -53,10 +55,10 @@ Die ersten vier Schlüssel sind das gemeinsame Format mit [GeniusDevam/littlebit
 | `littlebit.residual` | bool | Residualpfad vorhanden (`*_r`-Tensoren) |
 | `littlebit.eff_bits` | f32 | Ziel-bpw aus `littlebit_config.json` (`eff_bit`) oder `--eff-bits`; muss endlich und > 0 sein (nur zur Information) |
 | `littlebit.use_itq` | bool | Mit LittleBit-2-ITQ initialisiert (`use_itq` aus `littlebit_config.json`, sonst `false`; nur zur Information) |
-| `littlebit.l_round` | string | Nur bei uns. `none`: `l = v1·u2` exakt, nur FP16-Blockskala. `bf16`: `l` wurde vor dem Schreiben auf BF16 gerundet, wie bei LittleBits eigener Inferenz |
-| `littlebit.quant_func` | string | Nur bei uns. Trainings-Vorzeichenfunktion (nur zur Information) |
+| `littlebit.x.l_round` | string | Nur bei uns. `none`: `l = v1·u2` exakt, nur FP16-Blockskala. `bf16`: `l` wurde vor dem Schreiben auf BF16 gerundet, wie bei LittleBits eigener Inferenz |
+| `littlebit.x.quant_func` | string | Nur bei uns. Trainings-Vorzeichenfunktion (nur zur Information) |
 
-Ältere Dateien dieses Projekts (vor dem gemeinsamen Format) haben stattdessen `littlebit.version = 1` und `littlebit.eff_bit` und kein `use_itq`. Ihr Tensor-Layout entspricht `format_version` 2. Unser llama.cpp-Loader liest beide.
+Ältere Dateien dieses Projekts (vor dem gemeinsamen Format) haben stattdessen `littlebit.version = 1` und `littlebit.eff_bit` und kein `use_itq`. Ihr Tensor-Layout entspricht `format_version` 2. Unser llama.cpp-Loader liest beide. Dateien vom 2026-11-23 haben `l_round` und `quant_func` noch ohne `x.`; `scripts/check_llamacpp.py` liest beide Schreibweisen.
 
 ## Genauigkeit
 

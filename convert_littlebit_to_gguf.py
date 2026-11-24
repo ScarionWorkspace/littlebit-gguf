@@ -2,11 +2,13 @@
 """Convert a packed LittleBit checkpoint (Qwen3) to GGUF without expanding it to dense weights.
 
 Layout (docs/ANALYSIS.md 5.1, decisions in docs/PROGRESS.md), per projection P and path S ("" or "_r"):
-  blk.N.P.lb_v{S}  Q1_0  ne = [in, r]       row i = sign(V[i,:]) with block scale |l[i]|
-  blk.N.P.lb_u{S}  Q1_0  ne = [r_pad, out]  row o = sign(U[o,:]) with block scale |h[o]|,
-                                           padding columns are +|h[o]|
+  blk.N.P.lb_v{S}  Q1_0  ne = [in, r]       row k = sign bits of V[k,:], block scale l[k]
+  blk.N.P.lb_u{S}  Q1_0  ne = [r_pad, out]  row o = sign bits of U[o,:], block scale h[o],
+                                           padding bits cleared
   blk.N.P.lb_g{S}  F32   ne = [in]          input scale g (exact, BF16 -> F32)
-Signs of h and l are folded into the sign bits. r_pad = r rounded up to a multiple of 128.
+Block scales keep their sign (FP16, a value that underflows stays a signed zero) and the bits are
+the checkpoint's signs, as in the shared spec (GeniusDevam/littlebit-gguf docs/FORMAT.md), so
+files are byte-identical to the other converters'. r_pad = r rounded up to a multiple of 128.
 Everything else (embeddings, norms, lm_head, tokenizer, hparams) comes from llama.cpp's own
 Qwen3 converter, which this script imports from a llama.cpp checkout (MIT).
 
@@ -45,23 +47,26 @@ def pad_to(n: int, k: int) -> int:
     return (n + k - 1) // k * k
 
 
-def lb_rows(p: LBPath) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Dense float32 rows whose Q1_0 quantization is exactly the LittleBit factors.
+def q1_0_raw(signs: torch.Tensor, scales: torch.Tensor, row_len: int) -> np.ndarray:
+    """Raw Q1_0 rows: every block of row i has d = fp16(scales[i]) (sign kept) and bit j set
+    where signs[i, j] > 0. Columns beyond signs.shape[1] (rank padding) get cleared bits."""
+    rows, used = signs.shape
+    assert row_len % QK1_0 == 0 and used <= row_len
+    bits = np.zeros((rows, row_len), dtype=np.uint8)
+    bits[:, :used] = (signs > 0).numpy()
+    qs = np.packbits(bits, axis=-1, bitorder="little").reshape(rows, row_len // QK1_0, QK1_0 // 8)
+    # float64 -> float16 rounds once: l = v1*u2 and h are exact in float32 (<= 16 significant bits)
+    d = scales.numpy().astype(np.float16).view(np.uint8).reshape(rows, 1, 2)
+    d = np.broadcast_to(d, (rows, row_len // QK1_0, 2))
+    return np.ascontiguousarray(np.concatenate([d, qs], axis=-1).reshape(rows, -1))
 
-    Q1_0 quantizes a block of 128 values to d = mean|x| and bit = (x >= 0), so a row of
-    ±s quantizes to d = |s| (exact: s has <= 16 significant bits, 128*s fits FP32) and the
-    sign of each value. Only the FP16 rounding of d remains.
-    """
-    r = p.rank
-    r_pad = pad_to(r, QK1_0)
-    U = p.U.to(torch.float32)
-    V = p.V.to(torch.float32)
-    h = p.h.to(torch.float32)
-    l = p.l.to(torch.float32)
-    v = V * l[:, None]
-    u = h[:, None].abs().expand(-1, r_pad).clone()       # padding columns: +|h|
-    u[:, :r] = U * h[:, None]
-    return u.numpy(), v.numpy(), p.g.to(torch.float32).numpy()
+
+def lb_tensors(p: LBPath) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(lb_u, lb_v) as raw Q1_0 bytes and lb_g as float32."""
+    r_pad = pad_to(p.rank, QK1_0)
+    u = q1_0_raw(p.U, p.h, r_pad)
+    v = q1_0_raw(p.V, p.l, p.V.shape[1])
+    return u, v, p.g.to(torch.float32).numpy()
 
 
 def main():
@@ -119,13 +124,13 @@ def main():
         def set_gguf_parameters(self):
             super().set_gguf_parameters()
             w = self.gguf_writer
-            # the four shared keys, then two of our own (informational, other loaders ignore them)
+            # the four shared keys, then our own under littlebit.x.* (other loaders ignore them)
             w.add_uint32("littlebit.format_version", format_version)
             w.add_bool("littlebit.residual", residual)
             w.add_float32("littlebit.eff_bits", float(eff_bits))
             w.add_bool("littlebit.use_itq", use_itq)
-            w.add_string("littlebit.l_round", args.l_round)
-            w.add_string("littlebit.quant_func", str(ck.lb_config.get("quant_func", "")))
+            w.add_string("littlebit.x.l_round", args.l_round)
+            w.add_string("littlebit.x.quant_func", str(ck.lb_config.get("quant_func", "")))
 
         def generate_extra_tensors(self):
             yield from super().generate_extra_tensors()
@@ -134,13 +139,14 @@ def main():
                 for sfx, p in (("", lin.main), ("_r", lin.residual)):
                     if p is None:
                         continue
-                    u, v, g = lb_rows(p)
+                    u, v, g = lb_tensors(p)
                     h16 = np.abs(p.h.numpy()).astype(np.float16)
                     stats["n_h"] += h16.size
                     stats["h_fp16_zero"] += int(((h16 == 0) & (p.h.numpy() != 0)).sum())
                     stats["h_fp16_subnormal"] += int(((h16 != 0) & (h16 < np.float16(6.103515625e-05))).sum())
-                    yield f"{base}.lb_v{sfx}", torch.from_numpy(v)
-                    yield f"{base}.lb_u{sfx}", torch.from_numpy(u)
+                    # raw Q1_0, written directly: ggml's quantizer would make d = mean|x| >= 0
+                    self.gguf_writer.add_tensor(f"{base}.lb_v{sfx}", v, raw_dtype=gguf.GGMLQuantizationType.Q1_0)
+                    self.gguf_writer.add_tensor(f"{base}.lb_u{sfx}", u, raw_dtype=gguf.GGMLQuantizationType.Q1_0)
                     yield f"{base}.lb_g{sfx}", torch.from_numpy(g)
 
         def modify_tensors(self, data_torch, name, bid):
@@ -150,8 +156,6 @@ def main():
             yield from super().modify_tensors(data_torch, name, bid)
 
         def tensor_force_quant(self, name, new_name, bid, n_dims):
-            if re.search(r"\.lb_[uv](_r)?$", new_name):
-                return gguf.GGMLQuantizationType.Q1_0
             if re.search(r"\.lb_g(_r)?$", new_name):
                 return gguf.GGMLQuantizationType.F32
             return super().tensor_force_quant(name, new_name, bid, n_dims)
